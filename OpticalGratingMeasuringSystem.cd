@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Comment CommentText="光栅测量系统 - 类图&#xD;&#xA;Optical Grating Measuring System">
+    <Position X="0.5" Y="0.5" Height="0.75" Width="2.5" />
+  </Comment>
+  
+  <!-- 主应用程序类 -->
+  <Class Name="OpticalGratingApp">
+    <Position X="2" Y="2" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>OpticalGratingMeasuringSystem.exe</FileName>
+    </TypeIdentifier>
+    <Members>
+      <Method Name="WinMain" Hidden="false" />
+      <Method Name="InitializeSystem" Hidden="false" />
+      <Method Name="LoadConfiguration" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 配置管理类 -->
+  <Class Name="ConfigManager">
+    <Position X="5" Y="2" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_iniFilePath" Hidden="false" />
+      <Method Name="LoadINIFile" Hidden="false" />
+      <Method Name="GetComSettings" Hidden="false" />
+      <Method Name="GetChannelConfig" Hidden="false" />
+      <Method Name="GetAlarmLimits" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 通信管理类 -->
+  <Class Name="CommunicationManager">
+    <Position X="8" Y="2" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_comPort" Hidden="false" />
+      <Field Name="m_baudRate" Hidden="false" />
+      <Method Name="InitializeSerial" Hidden="false" />
+      <Method Name="SendModbusCommand" Hidden="false" />
+      <Method Name="ReadSlaveData" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- Qt主窗口类 -->
+  <Class Name="MainWindow" BaseTypeListCollapsed="true">
+    <Position X="2" Y="5" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_chartView" Hidden="false" />
+      <Field Name="m_lineSeries" Hidden="false" />
+      <Method Name="SetupUI" Hidden="false" />
+      <Method Name="UpdateDisplay" Hidden="false" />
+      <Method Name="ShowAlarm" Hidden="false" />
+    </Members>
+    <Lollipop Position="0.2" Collapsed="true" />
+  </Class>
+
+  <!-- 数据采集类 -->
+  <Class Name="DataAcquisition">
+    <Position X="5" Y="5" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_channels[5]" Hidden="false" />
+      <Method Name="ReadGratingData" Hidden="false" />
+      <Method Name="ProcessMeasurement" Hidden="false" />
+      <Method Name="CalculateCPK" Hidden="false" />
+      <Method Name="CheckAlarms" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 光栅通道类 -->
+  <Class Name="GratingChannel">
+    <Position X="8" Y="5" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_leftGrating" Hidden="false" />
+      <Field Name="m_rightGrating" Hidden="false" />
+      <Field Name="m_slaveAddress" Hidden="false" />
+      <Method Name="ReadLeftGrating" Hidden="false" />
+      <Method Name="ReadRightGrating" Hidden="false" />
+      <Method Name="GetMeasurement" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 报警管理类 -->
+  <Class Name="AlarmManager">
+    <Position X="11" Y="2" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_alarmLimits" Hidden="false" />
+      <Method Name="CheckHighAlarm" Hidden="false" />
+      <Method Name="CheckLowAlarm" Hidden="false" />
+      <Method Name="TriggerAlarm" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 质量控制类 -->
+  <Class Name="QualityControl">
+    <Position X="11" Y="5" Width="2.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+    </TypeIdentifier>
+    <Members>
+      <Field Name="m_cpkLimits" Hidden="false" />
+      <Method Name="CalculateCPK" Hidden="false" />
+      <Method Name="UpdateStatistics" Hidden="false" />
+      <Method Name="GenerateReport" Hidden="false" />
+    </Members>
+  </Class>
+
+  <!-- 关联关系 -->
+  <Association Name="Uses">
+    <End Name="OpticalGratingApp" Role="App" Multiplicity="1" />
+    <End Name="ConfigManager" Role="Config" Multiplicity="1" />
+  </Association>
+  
+  <Association Name="Controls">
+    <End Name="OpticalGratingApp" Role="App" Multiplicity="1" />
+    <End Name="MainWindow" Role="UI" Multiplicity="1" />
+  </Association>
+  
+  <Association Name="Manages">
+    <End Name="OpticalGratingApp" Role="App" Multiplicity="1" />
+    <End Name="CommunicationManager" Role="Comm" Multiplicity="1" />
+  </Association>
+  
+  <Association Name="Contains">
+    <End Name="DataAcquisition" Role="DAQ" Multiplicity="1" />
+    <End Name="GratingChannel" Role="Channel" Multiplicity="5" />
+  </Association>
+
+</ClassDiagram>

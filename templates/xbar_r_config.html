@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XbarR图设置</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        
+        .title-bar {
+            background-color: #2c3e50;
+            color: white;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+        }
+        
+        .title-text {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .time-display {
+            font-size: 12px;
+            color: #ecf0f1;
+        }
+        
+        .main-container {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+        
+        .left-panel {
+            width: 200px;
+            background-color: #34495e;
+            padding: 20px 10px;
+        }
+        
+        .channel-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 8px;
+            background-color: #5a6c7d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        .channel-btn:hover {
+            background-color: #4a5a6b;
+        }
+        
+        .channel-btn.active {
+            background-color: #3498db;
+        }
+        
+        .right-panel {
+            flex: 1;
+            background-color: white;
+            padding: 20px;
+        }
+        
+        .config-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .config-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .current-channel {
+            font-size: 14px;
+            color: #7f8c8d;
+        }
+        
+        .config-table {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
+        
+        .config-table th {
+            background-color: #ecf0f1;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+            border: 1px solid #bdc3c7;
+            font-size: 12px;
+        }
+        
+        .config-table td {
+            padding: 8px 12px;
+            border: 1px solid #bdc3c7;
+            font-size: 12px;
+        }
+        
+        .param-name {
+            font-weight: bold;
+            color: #2c3e50;
+            width: 120px;
+        }
+        
+        .param-input {
+            width: 80px;
+            padding: 4px 6px;
+            border: 1px solid #bdc3c7;
+            border-radius: 3px;
+            text-align: center;
+            font-size: 11px;
+        }
+        
+        .param-input:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 3px rgba(52, 152, 219, 0.3);
+        }
+        
+        .save-panel {
+            text-align: center;
+            margin-top: 30px;
+            padding: 20px;
+        }
+        
+        .save-btn {
+            background-color: #27ae60;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .cancel-btn {
+            background-color: #95a5a6;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .save-btn:hover {
+            background-color: #229954;
+        }
+        
+        .cancel-btn:hover {
+            background-color: #7f8c8d;
+        }
+        
+        .save-btn:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="title-bar">
+        <div class="title-text">XbarR图设置</div>
+        <div class="time-display" id="timeDisplay"></div>
+    </div>
+    
+    <div class="main-container">
+        <div class="left-panel">
+            <button class="channel-btn active" data-channel="G45_Channel_1">G45-L/R-P1</button>
+            <button class="channel-btn" data-channel="G45_Channel_2">G45-L/R-P5L</button>
+            <button class="channel-btn" data-channel="G45_Channel_3">G45-L/R-P5U</button>
+            <button class="channel-btn" data-channel="G45_Channel_4">G45-L/R-P3</button>
+            <button class="channel-btn" data-channel="G45_Channel_5">G45-L/R-P4</button>
+            <button class="channel-btn" data-channel="G48_Channel_1">G48-L/R-P1</button>
+            <button class="channel-btn" data-channel="G48_Channel_2">G48-L/R-P5L</button>
+            <button class="channel-btn" data-channel="G48_Channel_3">G48-L/R-P5U</button>
+            <button class="channel-btn" data-channel="G48_Channel_4">G48-L/R-P3</button>
+            <button class="channel-btn" data-channel="G48_Channel_5">G48-L/R-P4</button>
+            <button class="channel-btn" data-channel="G45_Channel_1CPK">G45-L/R-CPK</button>
+            <button class="channel-btn" data-channel="G48_Channel_1CPK">G48-L/R-CPK</button>
+        </div>
+        
+        <div class="right-panel">
+            <div class="config-header">
+                <div class="config-title">XbarR图设置</div>
+                <div class="current-channel" id="currentChannelDisplay">G45-L/R-P1设置</div>
+            </div>
+            
+            <div id="configContent" class="loading">
+                正在加载配置数据...
+            </div>
+            
+            <div class="save-panel" id="savePanel" style="display: none;">
+                <button class="save-btn" id="saveBtn">保存设置</button>
+                <button class="cancel-btn" id="cancelBtn">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentChannel = 'G45_Channel_1';
+        let configData = {};
+        let originalData = {};
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeEventListeners();
+            loadChannelConfig(currentChannel);
+            updateTimeDisplay();
+            setInterval(updateTimeDisplay, 1000);
+        });
+        
+        function initializeEventListeners() {
+            // 通道按钮点击事件
+            document.querySelectorAll('.channel-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    selectChannel(this.dataset.channel);
+                });
+            });
+            
+            // 保存按钮 - 修复选择器
+            document.getElementById('saveBtn').addEventListener('click', saveConfig);
+            
+            // 取消按钮 - 修复选择器
+            document.getElementById('cancelBtn').addEventListener('click', cancelChanges);
+        }
+        
+        function selectChannel(channel) {
+            currentChannel = channel;
+            
+            // 更新按钮状态
+            document.querySelectorAll('.channel-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.channel === channel);
+            });
+            
+            // 更新显示标题
+            const channelNames = {
+                'G45_Channel_1': 'G45-L/R-P1设置',
+                'G45_Channel_2': 'G45-L/R-P5L设置',
+                'G45_Channel_3': 'G45-L/R-P5U设置',
+                'G45_Channel_4': 'G45-L/R-P3设置',
+                'G45_Channel_5': 'G45-L/R-P4设置',
+                'G48_Channel_1': 'G48-L/R-P1设置',
+                'G48_Channel_2': 'G48-L/R-P5L设置',
+                'G48_Channel_3': 'G48-L/R-P5U设置',
+                'G48_Channel_4': 'G48-L/R-P3设置',
+                'G48_Channel_5': 'G48-L/R-P4设置',
+                'G45_Channel_1CPK': 'G45-L/R-CPK设置',
+                'G48_Channel_1CPK': 'G48-L/R-CPK设置'
+            };
+            
+            document.getElementById('currentChannelDisplay').textContent = channelNames[channel] || channel;
+            
+            // 加载配置数据
+            loadChannelConfig(channel);
+        }
+        
+        function loadChannelConfig(channel) {
+            document.getElementById('configContent').innerHTML = '<div class="loading">正在加载配置数据...</div>';
+            document.getElementById('savePanel').style.display = 'none';
+            
+            console.log('正在加载通道配置:', channel);
+            
+            fetch(`/api/get_config/${channel}`)
+                .then(response => {
+                    console.log('响应状态:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('接收到的数据:', data);
+                    
+                    if (data.status === 'success') {
+                        configData = data.config;
+                        originalData = JSON.parse(JSON.stringify(data.config)); // 深拷贝
+                        console.log('配置数据:', configData);
+                        renderConfigTable(channel, configData);
+                        document.getElementById('savePanel').style.display = 'block';
+                    } else {
+                        document.getElementById('configContent').innerHTML = `
+                            <div class="loading">
+                                加载失败: ${data.message}<br>
+                                <small>请检查控制台获取更多信息</small>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('请求失败:', error);
+                    document.getElementById('configContent').innerHTML = `
+                        <div class="loading">
+                            加载失败: ${error.message}<br>
+                            <small>请检查控制台获取更多信息</small>
+                        </div>
+                    `;
+                });
+        }
+        
+        function renderConfigTable(channel, data) {
+            console.log('渲染配置表格，通道:', channel, '数据:', data);
+            
+            let tableHTML = '<table class="config-table">';
+            
+            // 根据通道类型渲染不同的表格
+            if (channel.includes('CPK')) {
+                // CPK配置表格
+                tableHTML += `
+                    <thead>
+                        <tr>
+                            <th>参数名称</th>
+                            <th>最大值</th>
+                            <th>最小值</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                
+                // 获取所有参数名（去除_MAX/_MIN后缀）
+                const paramNames = new Set();
+                for (const key of Object.keys(data)) {
+                    if (key.toUpperCase().endsWith('_MAX') || key.toUpperCase().endsWith('_MIN')) {
+                        const baseName = key.replace(/_MAX|_MIN$/i, '');
+                        paramNames.add(baseName);
+                    }
+                }
+                
+                // 为每个参数创建一行
+                for (const paramName of Array.from(paramNames).sort()) {
+                    const maxKey = Object.keys(data).find(k => k.toLowerCase() === (paramName + '_max').toLowerCase());
+                    const minKey = Object.keys(data).find(k => k.toLowerCase() === (paramName + '_min').toLowerCase());
+                    const maxValue = maxKey ? parseFloat(data[maxKey]).toFixed(2) : '0.00';
+                    const minValue = minKey ? parseFloat(data[minKey]).toFixed(2) : '0.00';
+                    
+                    tableHTML += `
+                        <tr>
+                            <td class="param-name">${paramName}</td>
+                            <td><input type="number" class="param-input" data-key="${maxKey || paramName + '_MAX'}" value="${maxValue}" step="0.01"></td>
+                            <td><input type="number" class="param-input" data-key="${minKey || paramName + '_MIN'}" value="${minValue}" step="0.01"></td>
+                        </tr>
+                    `;
+                }
+            } else {
+                // 普通通道配置表格
+                tableHTML += `
+                    <thead>
+                        <tr>
+                            <th>参数名称</th>
+                            <th>平均值</th>
+                            <th>极差值</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                
+                // 动态获取参数组 - 根据实际数据键名
+                const paramGroups = {};
+                
+                // 从数据中提取参数组
+                for (const key of Object.keys(data)) {
+                    if (key.endsWith('_avg')) {
+                        const baseKey = key.replace('_avg', '');
+                        const ragKey = baseKey + '_rag';
+                        
+                        if (data.hasOwnProperty(ragKey)) {
+                            // 确定参数组名
+                            let groupName = '';
+                            if (baseKey.startsWith('x1_')) groupName = 'X1';
+                            else if (baseKey.startsWith('x2_')) groupName = 'X2';
+                            else if (baseKey.startsWith('t_')) groupName = 'T';
+                            else if (baseKey.startsWith('m13m9_')) groupName = 'M13M9';
+                            else if (baseKey.startsWith('p3lt_')) groupName = 'P3LT';
+                            else if (baseKey.startsWith('p3ut_')) groupName = 'P3UT';
+                            else if (baseKey.startsWith('p4_')) groupName = 'P4';
+                            else groupName = baseKey.toUpperCase();
+                            
+                            if (!paramGroups[groupName]) {
+                                paramGroups[groupName] = [];
+                            }
+                            paramGroups[groupName].push(baseKey);
+                        }
+                    }
+                }
+                
+                // 渲染每个参数组
+                for (const [groupName, params] of Object.entries(paramGroups)) {
+                    for (const param of params.sort()) {
+                        const avgKey = param + '_avg';
+                        const ragKey = param + '_rag';
+                        
+                        const avgValue = parseFloat(data[avgKey] || 0).toFixed(2);
+                        const ragValue = parseFloat(data[ragKey] || 0).toFixed(2);
+                        const displayName = param.toUpperCase().replace('_', '-');
+                        
+                        tableHTML += `
+                            <tr>
+                                <td class="param-name">${displayName}</td>
+                                <td><input type="number" class="param-input" data-key="${avgKey}" value="${avgValue}" step="0.01"></td>
+                                <td><input type="number" class="param-input" data-key="${ragKey}" value="${ragValue}" step="0.01"></td>
+                            </tr>
+                        `;
+                    }
+                }
+            }
+            
+            tableHTML += '</tbody></table>';
+            
+            console.log('生成的表格HTML:', tableHTML);
+            document.getElementById('configContent').innerHTML = tableHTML;
+            
+            // 添加输入框事件监听
+            document.querySelectorAll('.param-input').forEach(input => {
+                input.addEventListener('change', function() {
+                    configData[this.dataset.key] = parseFloat(this.value) || 0;
+                    console.log('配置数据更新:', this.dataset.key, '=', this.value);
+                });
+            });
+        }
+        
+        function saveConfig() {
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.textContent = '保存中...';
+            saveBtn.disabled = true;
+            
+            fetch(`/api/save_config/${currentChannel}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(configData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('配置保存成功！');
+                    originalData = JSON.parse(JSON.stringify(configData));
+                } else {
+                    alert(`保存失败: ${data.message}`);
+                }
+            })
+            .catch(error => {
+                alert(`保存失败: ${error.message}`);
+            })
+            .finally(() => {
+                saveBtn.textContent = '保存设置';
+                saveBtn.disabled = false;
+            });
+        }
+        
+        function cancelChanges() {
+            if (confirm('确定要取消所有更改吗？')) {
+                configData = JSON.parse(JSON.stringify(originalData));
+                renderConfigTable(currentChannel, configData);
+            }
+        }
+        
+        function updateTimeDisplay() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('timeDisplay').textContent = timeString;
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+

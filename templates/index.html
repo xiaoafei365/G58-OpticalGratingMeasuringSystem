@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G45-L-P1X光栅测量系统 - Web版</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        
+        /* 标题栏样式 - 与原程序一致 */
+        .title-bar {
+            background-color: #2c3e50;
+            color: white;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+        }
+        
+        .title-text {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .time-display {
+            font-size: 12px;
+            color: #ecf0f1;
+        }
+        
+        /* 控制面板样式 */
+        .control-panel {
+            background-color: #ecf0f1;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            gap: 10px;
+        }
+        
+        .control-btn {
+            padding: 10px 20px;
+            font-size: 12px;
+            font-weight: bold;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 120px;
+        }
+        
+        .start-btn {
+            background-color: #27ae60;
+            color: white;
+        }
+        
+        .stop-btn {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .export-btn {
+            background-color: #3498db;
+            color: white;
+        }
+        
+        .config-btn {
+            background-color: #9b59b6;
+            color: white;
+        }
+        
+        .system-status {
+            margin-left: auto;
+            font-size: 12px;
+            font-weight: bold;
+            color: #27ae60;
+        }
+        
+        /* 选择面板样式 */
+        .selection-panel {
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            margin: 5px 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        
+        .panel-title {
+            font-size: 12px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .selection-buttons {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .selection-btn {
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: bold;
+            border: 1px solid #ddd;
+            background-color: #ecf0f1;
+            color: black;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        .selection-btn.active {
+            background-color: #3498db;
+            color: white;
+        }
+        
+        /* 状态信息面板 */
+        .status-panel {
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            margin: 5px 10px;
+            padding: 10px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .cpk-display {
+            font-size: 14px;
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        
+        .current-value, .spec-limits {
+            font-size: 12px;
+        }
+        
+        /* 图表区域 */
+        .chart-area {
+            padding: 10px;
+            background-color: white;
+            margin: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            min-height: 600px;
+        }
+        
+        .chart-container {
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            height: 280px;
+            position: relative;
+        }
+        
+        /* 底部状态栏 */
+        .status-bar {
+            background-color: #34495e;
+            color: white;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 12px;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+        
+        .connection-status {
+            margin-left: auto;
+        }
+        
+        /* 报警样式 */
+        .alarm-message {
+            background-color: #e74c3c;
+            color: white;
+            padding: 10px;
+            margin: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <!-- 标题栏 - 与原程序布局完全一致 -->
+    <div class="title-bar">
+        <div class="title-text">G45-L-P1X光栅测量系统 - Web版</div>
+        <div class="time-display" id="timeDisplay"></div>
+    </div>
+    
+    <!-- 控制面板 -->
+    <div class="control-panel">
+        <button class="control-btn start-btn" id="startBtn">开始测量</button>
+        <button class="control-btn stop-btn" id="stopBtn" disabled>停止测量</button>
+        <button class="control-btn export-btn" id="exportBtn">导出数据</button>
+        <button class="control-btn config-btn" id="configBtn">参数设置</button>
+        <div class="system-status" id="systemStatus">系统就绪</div>
+    </div>
+    
+    <!-- 磁栅尺选择面板 -->
+    <div class="selection-panel">
+        <div class="panel-title">磁栅尺选择</div>
+        <div class="selection-buttons" id="gratingButtons">
+            <button class="selection-btn active" data-grating="G45_Channel_1">G45-L/R-P1</button>
+            <button class="selection-btn" data-grating="G45_Channel_2">G45-L/R-P5L</button>
+            <button class="selection-btn" data-grating="G45_Channel_3">G45-L/R-P5U</button>
+            <button class="selection-btn" data-grating="G45_Channel_4">G45-L/R-P3</button>
+            <button class="selection-btn" data-grating="G45_Channel_5">G45-L/R-P4</button>
+            <button class="selection-btn" data-grating="G48_Channel_1">G48-L/R-P1</button>
+            <button class="selection-btn" data-grating="G48_Channel_2">G48-L/R-P5L</button>
+            <button class="selection-btn" data-grating="G48_Channel_3">G48-L/R-P5U</button>
+            <button class="selection-btn" data-grating="G48_Channel_4">G48-L/R-P3</button>
+            <button class="selection-btn" data-grating="G48_Channel_5">G48-L/R-P4</button>
+        </div>
+    </div>
+    
+    <!-- 状态信息面板 -->
+    <div class="status-panel">
+        <div class="cpk-display" id="cpkDisplay">CPK: --</div>
+        <div class="current-value" id="currentValue">当前值: --</div>
+        <div class="spec-limits" id="specLimits">规格限: --</div>
+    </div>
+    
+    <!-- 报警区域 -->
+    <div id="alarmArea"></div>
+    
+    <!-- 图表区域 -->
+    <div class="chart-area" id="chartArea">
+        <!-- 图表将动态生成 -->
+    </div>
+    
+    <!-- 底部状态栏 -->
+    <div class="status-bar">
+        <span id="statusText">系统就绪</span>
+        <span class="connection-status" id="connectionStatus">未连接</span>
+    </div>
+
+    <script>
+        // 全局变量
+        let socket = null;
+        let charts = {};
+        let currentGrating = 'G45_Channel_1';
+        let isRunning = false;
+        
+        // 磁栅尺参数映射
+        const gratingParams = {
+            'G45_Channel_1': ['x1', 'x2', 't'],
+            'G45_Channel_2': ['m13m9', 'p3lt'],
+            'G45_Channel_3': ['p3ut'],
+            'G45_Channel_4': ['m6m8', 'p5t'],
+            'G45_Channel_5': ['p4'],
+            'G48_Channel_1': ['x1', 'x2', 't'],
+            'G48_Channel_2': ['m13m9', 'p3lt'],
+            'G48_Channel_3': ['p3ut'],
+            'G48_Channel_4': ['m6m8', 'p5t'],
+            'G48_Channel_5': ['p4']
+        };
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSocket();
+            initializeEventListeners();
+            createChartsForGrating(currentGrating);
+            updateTimeDisplay();
+            setInterval(updateTimeDisplay, 1000);
+        });
+        
+        // Socket.IO初始化
+        function initializeSocket() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                document.getElementById('connectionStatus').textContent = '已连接';
+                document.getElementById('connectionStatus').style.color = '#27ae60';
+            });
+            
+            socket.on('disconnect', function() {
+                document.getElementById('connectionStatus').textContent = '连接断开';
+                document.getElementById('connectionStatus').style.color = '#e74c3c';
+            });
+            
+            socket.on('measurement_update', function(data) {
+                if (data.channel === currentChannel) {
+                    updateChart();
+                    updateStatusDisplay(data.data);
+                }
+                updateStatusText(`通道${data.channel}数据更新 - ${new Date().toLocaleTimeString()}`);
+            });
+            
+            socket.on('alarm', function(data) {
+                showAlarm(data.message);
+            });
+        }
+        
+        // 事件监听器初始化
+        function initializeEventListeners() {
+            // 开始测量按钮
+            document.getElementById('startBtn').addEventListener('click', function() {
+                fetch('/api/start_measurement', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            isRunning = true;
+                            document.getElementById('startBtn').disabled = true;
+                            document.getElementById('stopBtn').disabled = false;
+                            document.getElementById('systemStatus').textContent = '测量中...';
+                            document.getElementById('systemStatus').style.color = '#f39c12';
+                        }
+                    });
+            });
+            
+            // 停止测量按钮
+            document.getElementById('stopBtn').addEventListener('click', function() {
+                fetch('/api/stop_measurement', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            isRunning = false;
+                            document.getElementById('startBtn').disabled = false;
+                            document.getElementById('stopBtn').disabled = true;
+                            document.getElementById('systemStatus').textContent = '已停止';
+                            document.getElementById('systemStatus').style.color = '#e74c3c';
+                        }
+                    });
+            });
+            
+            // 导出数据按钮
+            document.getElementById('exportBtn').addEventListener('click', function() {
+                fetch('/api/export_data')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(`数据已导出到 ${data.filename}`);
+                        } else {
+                            alert(`导出失败: ${data.message}`);
+                        }
+                    });
+            });
+            
+            // 磁栅尺选择按钮
+            document.getElementById('gratingButtons').addEventListener('click', function(e) {
+                if (e.target.classList.contains('selection-btn')) {
+                    selectGrating(e.target.dataset.grating);
+                }
+            });
+            
+            // 参数设置按钮
+            document.getElementById('configBtn').addEventListener('click', function() {
+                window.open('/config', '_blank', 'width=1200,height=800');
+            });
+        }
+        
+        // 磁栅尺选择
+        function selectGrating(grating) {
+            currentGrating = grating;
+            
+            // 更新按钮状态
+            document.querySelectorAll('#gratingButtons .selection-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.grating === grating);
+            });
+            
+            // 重新创建图表
+            createChartsForGrating(grating);
+        }
+        
+        // 为指定磁栅尺创建图表
+        function createChartsForGrating(grating) {
+            const chartArea = document.getElementById('chartArea');
+            chartArea.innerHTML = ''; // 清空现有图表
+            charts = {}; // 重置图表对象
+            
+            const params = gratingParams[grating] || [];
+            
+            // 创建图表容器
+            params.forEach(param => {
+                // 平均值图表
+                const avgContainer = document.createElement('div');
+                avgContainer.className = 'chart-container';
+                avgContainer.style.width = '48%';
+                avgContainer.style.display = 'inline-block';
+                avgContainer.style.margin = '1%';
+                
+                const avgCanvas = document.createElement('canvas');
+                avgCanvas.id = `chart_${param}_avg`;
+                avgContainer.appendChild(avgCanvas);
+                chartArea.appendChild(avgContainer);
+                
+                // 极差值图表
+                const ragContainer = document.createElement('div');
+                ragContainer.className = 'chart-container';
+                ragContainer.style.width = '48%';
+                ragContainer.style.display = 'inline-block';
+                ragContainer.style.margin = '1%';
+                
+                const ragCanvas = document.createElement('canvas');
+                ragCanvas.id = `chart_${param}_rag`;
+                ragContainer.appendChild(ragCanvas);
+                chartArea.appendChild(ragContainer);
+                
+                // 创建Chart.js图表
+                createChart(`chart_${param}_avg`, param, '平均值');
+                createChart(`chart_${param}_rag`, param, '极差值');
+            });
+        }
+        
+        // 创建单个图表
+        function createChart(canvasId, param, type) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            
+            // 获取配置参数
+            const config = getChartConfig(param, type);
+            
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 25}, (_, i) => i + 1),
+                    datasets: [{
+                        label: `${param.toUpperCase()} ${type}`,
+                        data: Array(25).fill(config.baseValue),
+                        borderColor: '#2ecc71',
+                        backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${param.toUpperCase()} - ${type}`,
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            }
+                        },
+                        legend: {
+                            display: false
+                        },
+                        annotation: {
+                            annotations: {
+                                // 蓝色设定值线
+                                baseLine: {
+                                    type: 'line',
+                                    yMin: config.baseValue,
+                                    yMax: config.baseValue,
+                                    borderColor: '#3498db',
+                                    borderWidth: 2,
+                                    borderDash: [5, 5],
+                                    label: {
+                                        content: `设定值: ${config.baseValue}`,
+                                        enabled: true,
+                                        position: 'end'
+                                    }
+                                },
+                                // 红色上限线
+                                upperAlarmLine: {
+                                    type: 'line',
+                                    yMin: config.upperAlarm,
+                                    yMax: config.upperAlarm,
+                                    borderColor: '#e74c3c',
+                                    borderWidth: 2,
+                                    label: {
+                                        content: `上限: ${config.upperAlarm}`,
+                                        enabled: true,
+                                        position: 'end'
+                                    }
+                                },
+                                // 红色下限线
+                                lowerAlarmLine: {
+                                    type: 'line',
+                                    yMin: config.lowerAlarm,
+                                    yMax: config.lowerAlarm,
+                                    borderColor: '#e74c3c',
+                                    borderWidth: 2,
+                                    label: {
+                                        content: `下限: ${config.lowerAlarm}`,
+                                        enabled: true,
+                                        position: 'end'
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: '测量点'
+                            },
+                            min: 1,
+                            max: 25
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '测量值'
+                            },
+                            min: config.yMin,
+                            max: config.yMax
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+            
+            charts[canvasId] = chart;
+        }
+        
+        // 获取图表配置参数
+        function getChartConfig(param, type) {
+            // 从后端获取配置数据
+            return fetch(`/api/get_chart_config/${currentGrating}/${param}/${type}`)
+                .then(response => response.json())
+                .then(data => data)
+                .catch(() => {
+                    // 默认配置
+                    return {
+                        yMin: 0,
+                        yMax: 100,
+                        baseValue: 50,
+                        upperAlarm: 80,
+                        lowerAlarm: 20
+                    };
+                });
+        }
+        
+        // 异步创建图表
+        async function createChart(canvasId, param, type) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            
+            // 获取配置参数
+            const config = await getChartConfig(param, type);
+            
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 25}, (_, i) => i + 1),
+                    datasets: [{
+                        label: `${param.toUpperCase()} ${type}`,
+                        data: Array(25).fill(config.baseValue),
+                        borderColor: '#2ecc71',
+                        backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 3,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${param.toUpperCase()} - ${type}`,
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            }
+                        },
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: '测量点'
+                            },
+                            min: 1,
+                            max: 25
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: '测量值'
+                            },
+                            min: config.yMin,
+                            max: config.yMax
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+            
+            // 添加参考线
+            addReferenceLines(chart, config);
+            
+            charts[canvasId] = chart;
+        }
+        
+        // 添加参考线
+        function addReferenceLines(chart, config) {
+            const canvas = chart.canvas;
+            const ctx = canvas.getContext('2d');
+            
+            // 在图表绘制后添加参考线
+            Chart.register({
+                id: 'referenceLines',
+                afterDraw: function(chart) {
+                    const ctx = chart.ctx;
+                    const chartArea = chart.chartArea;
+                    const yScale = chart.scales.y;
+                    
+                    ctx.save();
+                    
+                    // 蓝色设定值线
+                    const baseY = yScale.getPixelForValue(config.baseValue);
+                    ctx.strokeStyle = '#3498db';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.moveTo(chartArea.left, baseY);
+                    ctx.lineTo(chartArea.right, baseY);
+                    ctx.stroke();
+                    
+                    // 红色上限线
+                    const upperY = yScale.getPixelForValue(config.upperAlarm);
+                    ctx.strokeStyle = '#e74c3c';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(chartArea.left, upperY);
+                    ctx.lineTo(chartArea.right, upperY);
+                    ctx.stroke();
+                    
+                    // 红色下限线
+                    const lowerY = yScale.getPixelForValue(config.lowerAlarm);
+                    ctx.strokeStyle = '#e74c3c';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(chartArea.left, lowerY);
+                    ctx.lineTo(chartArea.right, lowerY);
+                    ctx.stroke();
+                    
+                    ctx.restore();
+                }
+            });
+        }
+        
+        // 更新图表数据
+        function updateChart() {
+            fetch(`/api/get_data/${currentChannel}/${currentParameter}/${currentView}`)
+                .then(response => response.json())
+                .then(data => {
+                    // 确保有50个数据点
+                    const chartData = Array(50).fill(0);
+                    data.forEach((point, index) => {
+                        if (index < 50) {
+                            chartData[index] = point.y;
+                        }
+                    });
+                    
+                    chart.data.datasets[0].data = chartData;
+                    chart.update('none');
+                });
+        }
+        
+        // 更新图表标题
+        function updateChartTitle() {
+            const title = `通道${currentChannel} - ${currentParameter} - ${currentView === 'avg' ? '平均值' : '极差值'}`;
+            chart.options.plugins.title.text = title;
+            chart.update('none');
+        }
+        
+        // 更新Y轴范围 - 与原程序规格一致
+        function updateYAxisRange() {
+            let yMin, yMax;
+            
+            if (currentView === 'avg') {
+                const ranges = {
+                    'P1': [218.5, 221.5],
+                    'P5U': [423.0, 427.0],
+                    'P5L': [423.0, 427.0],
+                    'P3': [642.0, 648.0],
+                    'P4': [0.0, 2.0]
+                };
+                [yMin, yMax] = ranges[currentParameter] || [0, 100];
+            } else {
+                [yMin, yMax] = [0, 1.0];
+            }
+            
+            chart.options.scales.y.min = yMin;
+            chart.options.scales.y.max = yMax;
+            chart.update('none');
+        }
+        
+        // 更新状态显示
+        function updateStatusDisplay(data) {
+            const valueMap = {
+                'P1': { avg: data.p1_avg, cpk: data.cpk_p1 },
+                'P5U': { avg: data.p5u_avg, cpk: data.cpk_p5u },
+                'P5L': { avg: data.p5l_avg, cpk: data.cpk_p5l },
+                'P3': { avg: data.p3_avg, cpk: data.cpk_p3 },
+                'P4': { avg: data.p4_avg, cpk: data.cpk_p4 }
+            };
+            
+            if (currentParameter in valueMap) {
+                const { avg, cpk } = valueMap[currentParameter];
+                document.getElementById('cpkDisplay').textContent = `CPK: ${cpk.toFixed(2)}`;
+                document.getElementById('currentValue').textContent = `当前值: ${avg.toFixed(2)}`;
+                
+                // 更新规格限显示
+                const limits = getSpecLimits(currentParameter);
+                document.getElementById('specLimits').textContent = `规格限: ${limits.lsl} ~ ${limits.usl}`;
+            }
+        }
+        
+        // 获取规格限 - 与原程序配置一致
+        function getSpecLimits(parameter) {
+            const limits = {
+                'P1': { lsl: 219.10, usl: 220.90 },
+                'P5U': { lsl: 423.0, usl: 427.0 },
+                'P5L': { lsl: 423.0, usl: 427.0 },
+                'P3': { lsl: 643.0, usl: 647.0 },
+                'P4': { lsl: 0.0, usl: 2.0 }
+            };
+            return limits[parameter] || { lsl: 0, usl: 100 };
+        }
+        
+        // 显示报警
+        function showAlarm(message) {
+            const alarmArea = document.getElementById('alarmArea');
+            const alarmDiv = document.createElement('div');
+            alarmDiv.className = 'alarm-message';
+            alarmDiv.textContent = message;
+            
+            alarmArea.appendChild(alarmDiv);
+            
+            // 5秒后自动移除报警
+            setTimeout(() => {
+                if (alarmDiv.parentNode) {
+                    alarmDiv.parentNode.removeChild(alarmDiv);
+                }
+            }, 5000);
+        }
+        
+        // 更新时间显示
+        function updateTimeDisplay() {
+            const now = new Date();
+            const timeString = now.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            document.getElementById('timeDisplay').textContent = timeString;
+        }
+        
+        // 更新状态文本
+        function updateStatusText(text) {
+            document.getElementById('statusText').textContent = text;
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
