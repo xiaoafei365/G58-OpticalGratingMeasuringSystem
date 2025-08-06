@@ -186,9 +186,13 @@ class DatabaseManager:
                 self.return_connection(conn)
                 return None
 
-            # 根据版本、参数和图表类型构建字段名
-            field_name = self._get_field_name(version, param, chart_type)
+            # 根据版本、参数、图表类型和通道构建字段名
+            field_name = self._get_field_name(version, param, chart_type, channel)
             logging.info(f"尝试查询表 {table_name} 的字段 {field_name}")
+
+            # 特别记录P3LT参数的处理
+            if param.lower() == 'p3lt':
+                logging.info(f"🎯 P3LT参数处理: table={table_name}, field={field_name}, version={version}, channel={channel}")
 
             # 首先检查表结构，看看有哪些字段
             cursor.execute(f"SELECT TOP 1 * FROM [{table_name}]")
@@ -198,40 +202,89 @@ class DatabaseManager:
 
                 # 如果指定字段不存在，尝试其他可能的字段名
                 if field_name.lower() not in available_columns:
-                    # 根据版本生成不同的替代字段名
-                    if version == 'G45':
-                        alternative_names = [
-                            f"{param.lower()}_{chart_type}",  # 标准格式: x1_avg, x1_rag
-                            f"{param.upper()}_{chart_type.upper()}",  # 大写格式: X1_AVG, X1_RAG
-                            f"{param}_{chart_type}",  # 原格式
-                            param.lower(),  # 直接使用参数名
-                            param.upper(),  # 大写参数名
-                            f"{param.lower()}-{chart_type}",  # 连字符格式
-                            f"{param.upper()}-{chart_type.upper()}",  # 大写连字符格式
-                        ]
-                    else:
-                        # G48版本的替代字段名
-                        alternative_names = [
-                            param.lower(),  # 直接使用参数名
-                            f"{param.upper()}_{chart_type.upper()}",  # 大写格式
-                            f"{param}_{chart_type}",  # 原格式
-                        ]
+                    # 特殊处理P3LT参数 - 根据表的实际字段动态选择
+                    if param.lower() == 'p3lt':
+                        p3lt_candidates = []
+                        if chart_type == 'avg':
+                            p3lt_candidates = ['p5l totalav', 'p3l totalav', 'P5L totalAV', 'P3L totalAV', 'p5ltotalav', 'p3ltotalav']
+                        else:  # rag
+                            p3lt_candidates = ['p5l totalmn', 'p3l totalmn', 'P5L totalMN', 'P3L totalMN', 'p5ltotalmn', 'p3ltotalmn']
 
-                    found_field = None
-                    # 查找匹配的字段 - 使用更精确的匹配
-                    for alt_name in alternative_names:
-                        for col in available_columns:
-                            if alt_name.lower() == col:
-                                found_field = cursor.description[available_columns.index(col)][0]  # 获取原始字段名
+                        found_field = None
+                        for candidate in p3lt_candidates:
+                            for col in available_columns:
+                                if candidate.lower() == col:
+                                    found_field = cursor.description[available_columns.index(col)][0]
+                                    logging.info(f"🎯 P3LT字段匹配成功: {candidate} -> {found_field}")
+                                    break
+                            if found_field:
                                 break
-                        if found_field:
-                            break
 
-                    if found_field:
-                        field_name = found_field
-                        logging.info(f"使用替代字段名: {field_name}")
+                        if found_field:
+                            field_name = found_field
+                        else:
+                            logging.warning(f"🎯 P3LT参数未找到匹配字段，候选字段: {p3lt_candidates}")
+                            logging.warning(f"🎯 可用字段: {available_columns}")
+
+                    # 特殊处理P5T参数 - 根据表的实际字段动态选择
+                    elif param.lower() == 'p5t':
+                        p5t_candidates = []
+                        if chart_type == 'avg':
+                            p5t_candidates = ['p3 totalav', 'p3 totaoav', 'P3 totalAV', 'P3 totaoAV', 'p3totalav', 'p3totaoav']
+                        else:  # rag
+                            p5t_candidates = ['p3 totalmn', 'p3 totaomn', 'P3 totalMN', 'P3 totaoMN', 'p3totalmn', 'p3totaomn']
+
+                        found_field = None
+                        for candidate in p5t_candidates:
+                            for col in available_columns:
+                                if candidate.lower() == col:
+                                    found_field = cursor.description[available_columns.index(col)][0]
+                                    logging.info(f"🎯 P5T字段匹配成功: {candidate} -> {found_field}")
+                                    break
+                            if found_field:
+                                break
+
+                        if found_field:
+                            field_name = found_field
+                        else:
+                            logging.warning(f"🎯 P5T参数未找到匹配字段，候选字段: {p5t_candidates}")
+                            logging.warning(f"🎯 可用字段: {available_columns}")
                     else:
-                        # 如果都找不到，使用第一个数值字段
+                        # 其他参数的替代字段名逻辑
+                        if version == 'G45':
+                            alternative_names = [
+                                f"{param.lower()}_{chart_type}",  # 标准格式: x1_avg, x1_rag
+                                f"{param.upper()}_{chart_type.upper()}",  # 大写格式: X1_AVG, X1_RAG
+                                f"{param}_{chart_type}",  # 原格式
+                                param.lower(),  # 直接使用参数名
+                                param.upper(),  # 大写参数名
+                                f"{param.lower()}-{chart_type}",  # 连字符格式
+                                f"{param.upper()}-{chart_type.upper()}",  # 大写连字符格式
+                            ]
+                        else:
+                            # G48版本的替代字段名
+                            alternative_names = [
+                                param.lower(),  # 直接使用参数名
+                                f"{param.upper()}_{chart_type.upper()}",  # 大写格式
+                                f"{param}_{chart_type}",  # 原格式
+                            ]
+
+                        found_field = None
+                        # 查找匹配的字段 - 使用更精确的匹配
+                        for alt_name in alternative_names:
+                            for col in available_columns:
+                                if alt_name.lower() == col:
+                                    found_field = cursor.description[available_columns.index(col)][0]  # 获取原始字段名
+                                    break
+                            if found_field:
+                                break
+
+                        if found_field:
+                            field_name = found_field
+                            logging.info(f"使用替代字段名: {field_name}")
+
+                    # 如果还是没找到，使用第一个数值字段作为最后的回退
+                    if field_name.lower() not in available_columns:
                         cursor.execute(f"SELECT TOP 1 * FROM [{table_name}]")
                         row = cursor.fetchone()
                         if row:
@@ -244,7 +297,7 @@ class DatabaseManager:
                                     break
 
                         # 如果还是找不到合适的字段，记录详细信息并返回None
-                        if not found_field and field_name.lower() not in available_columns:
+                        if field_name.lower() not in available_columns:
                             logging.warning(f"表 {table_name} 中未找到参数 {param} 的 {chart_type} 字段")
                             logging.warning(f"期望字段: {field_name}")
                             logging.warning(f"可用字段: {[cursor.description[i][0] for i in range(len(cursor.description))]}")
@@ -253,10 +306,15 @@ class DatabaseManager:
 
             # 查询数据
             try:
-                cursor.execute(f"SELECT TOP 25 [{field_name}] FROM [{table_name}] ORDER BY ID")
+                # 首先尝试按DATE和TIME排序（最常见的排序字段）
+                cursor.execute(f"SELECT TOP 25 [{field_name}] FROM [{table_name}] WHERE [{field_name}] IS NOT NULL ORDER BY DATE DESC, TIME DESC")
             except:
-                # 如果按ID排序失败，尝试不排序
-                cursor.execute(f"SELECT TOP 25 [{field_name}] FROM [{table_name}]")
+                try:
+                    # 如果DATE/TIME排序失败，尝试按ID排序
+                    cursor.execute(f"SELECT TOP 25 [{field_name}] FROM [{table_name}] WHERE [{field_name}] IS NOT NULL ORDER BY ID")
+                except:
+                    # 如果都失败，不排序但过滤空值
+                    cursor.execute(f"SELECT TOP 25 [{field_name}] FROM [{table_name}] WHERE [{field_name}] IS NOT NULL")
 
             rows = cursor.fetchall()
 
@@ -295,9 +353,9 @@ class DatabaseManager:
 
 
 
-    def _get_field_name(self, version: str, param: str, chart_type: str) -> str:
-        """根据版本、参数和图表类型获取字段名"""
-        # 统一的字段映射 - G45和G48都使用相同的表名结构
+    def _get_field_name(self, version: str, param: str, chart_type: str, channel: int = None) -> str:
+        """根据版本、参数、图表类型和通道获取字段名"""
+        # 统一的字段映射
         field_mapping = {
             # G48版本的字段映射 - 基于实际数据库字段结构
             'G48': {
@@ -330,29 +388,35 @@ class DatabaseManager:
                 ('p4', 'rag'): 'P4MN',          # P4极差值 -> P4MN
             },
 
-            # G45版本的字段映射
+            # G45版本的字段映射 - 基于实际数据库字段结构
             'G45': {
-                # 平均值字段映射
-                ('x1', 'avg'): 'x1_avg',
-                ('x2', 'avg'): 'x2_avg',
-                ('t', 'avg'): 't_avg',
-                ('m13m9', 'avg'): 'm13m9_avg',
-                ('p3lt', 'avg'): 'p3lt_avg',
-                ('p3ut', 'avg'): 'p3ut_avg',
-                ('m6m8', 'avg'): 'm6m8_avg',
-                ('p5t', 'avg'): 'p5t_avg',
-                ('p4', 'avg'): 'p4_avg',
+                # P1通道 (Channel 1) - 对应G45_L_P1_25表
+                ('x1', 'avg'): 'P1 X-BAV',      # X1平均值 -> P1 X-BAV
+                ('x1', 'rag'): 'P1 X-BMN',      # X1极差值 -> P1 X-BMN
+                ('x2', 'avg'): 'P1 X-CAV',      # X2平均值 -> P1 X-CAV
+                ('x2', 'rag'): 'P1 X-CMN',      # X2极差值 -> P1 X-CMN
+                ('t', 'avg'): 'P1 totalAV',     # T平均值 -> P1 totalAV
+                ('t', 'rag'): 'P1 totalMN',     # T极差值 -> P1 totalMN
 
-                # 极差值字段映射
-                ('x1', 'rag'): 'x1_rag',
-                ('x2', 'rag'): 'x2_rag',
-                ('t', 'rag'): 't_rag',
-                ('m13m9', 'rag'): 'm13m9_rag',
-                ('p3lt', 'rag'): 'p3lt_rag',
-                ('p3ut', 'rag'): 'p3ut_rag',
-                ('m6m8', 'rag'): 'm6m8_rag',
-                ('p5t', 'rag'): 'p5t_rag',
-                ('p4', 'rag'): 'p4_rag',
+                # P5L通道 (Channel 2) - 对应G45_L_P5L_25表
+                ('m13m9', 'avg'): 'M13-M9AV',   # M13M9平均值 -> M13-M9AV
+                ('m13m9', 'rag'): 'M13-M9MN',   # M13M9极差值 -> M13-M9MN
+                ('p3lt', 'avg'): 'p5l totalav', # P3LT平均值 -> p5l totalav (修正：匹配实际字段名)
+                ('p3lt', 'rag'): 'p5l totalmn', # P3LT极差值 -> p5l totalmn (修正：匹配实际字段名)
+
+                # P5U通道 (Channel 3) - 对应G45_L_P5U_25表
+                ('p3ut', 'avg'): 'P5U totalAV', # P3UT平均值 -> P5U totalAV
+                ('p3ut', 'rag'): 'P5U totalMN', # P3UT极差值 -> P5U totalMN
+
+                # P3通道 (Channel 4) - 对应G45_L_P3_25表
+                ('m6m8', 'avg'): 'M6-M8AV',     # M6M8平均值 -> M6-M8AV
+                ('m6m8', 'rag'): 'M6-M8MN',     # M6M8极差值 -> M6-M8MN
+                ('p5t', 'avg'): 'P3 totalAV',   # P5T平均值 -> P3 totalAV
+                ('p5t', 'rag'): 'P3 totalMN',   # P5T极差值 -> P3 totalMN
+
+                # P4通道 (Channel 5) - 对应G45_L_P4_25表
+                ('p4', 'avg'): 'P4AV',          # P4平均值 -> P4AV
+                ('p4', 'rag'): 'P4MN',          # P4极差值 -> P4MN
             }
         }
 
@@ -787,29 +851,23 @@ class OpticalGratingWebSystem:
                             'chart_type': chart_type
                         })
 
-                # 如果数据库不可用，返回模拟数据
-                base_values = {
-                    'x1': 220.0, 'x2': 425.0, 't': 645.0,
-                    'm13m9': 142.0, 'p3lt': 501.0, 'p3ut': 219.0,
-                    'm6m8': 436.0, 'p5t': 580.0, 'p4': 466.0
-                }
-                base_value = base_values.get(param.lower(), 100.0)
-                noise_level = 0.5 if chart_type == 'rag' else 0.3
-
-                simulated_data = [{'x': i+1, 'y': base_value + np.random.normal(0, noise_level)} for i in range(25)]
+                # 如果数据库不可用或无数据，返回空数据
                 return jsonify({
                     'status': 'success',
-                    'data': simulated_data,
-                    'source': 'simulation',
+                    'data': [],
+                    'source': 'empty',
                     'param': param,
-                    'chart_type': chart_type
+                    'chart_type': chart_type,
+                    'message': '数据库连接失败或无数据'
                 })
 
             except Exception as e:
                 logging.error(f"获取图表数据失败: {e}")
                 return jsonify({
                     'status': 'error',
-                    'message': str(e)
+                    'data': [],
+                    'message': str(e),
+                    'source': 'error'
                 })
 
         @self.app.route('/api/get_database_info')
@@ -1169,6 +1227,250 @@ class OpticalGratingWebSystem:
                     'status': 'error',
                     'message': str(e)
                 })
+
+        @self.app.route('/api/get_cpk_data/<version>/<int:channel>/<side>')
+        def get_cpk_data(version, channel, side):
+            """获取CPK数据的API端点"""
+            try:
+                cpk_data = self.get_latest_cpk_data(version, channel, side)
+                if cpk_data is None:
+                    return jsonify({'error': '无法获取CPK数据'}), 404
+                return jsonify(cpk_data)
+            except Exception as e:
+                logging.error(f"获取CPK数据失败: {e}")
+                return jsonify({'error': str(e)}), 500
+
+    def get_latest_cpk_data(self, version, channel, side):
+        """获取最新的CPK数据 - 版本相关"""
+        try:
+            if not self.db_manager or not self.db_manager.available:
+                return None
+
+            # 构建表名
+            table_name = f"{version}_{side}_P{channel}_25"
+            if channel == 1:
+                table_name = f"{version}_{side}_P1_25"
+            elif channel == 2:
+                table_name = f"{version}_{side}_P5L_25"
+            elif channel == 3:
+                table_name = f"{version}_{side}_P5U_25"
+            elif channel == 4:
+                table_name = f"{version}_{side}_P3_25"
+            elif channel == 5:
+                table_name = f"{version}_{side}_P4_25"
+
+            # 获取版本相关的CPK配置
+            cpk_config = self.get_cpk_config(version, channel)
+            if not cpk_config:
+                logging.warning(f"未找到版本 {version} 通道 {channel} 的CPK配置")
+                return None
+
+            # 获取最新的多条记录用于CPK计算
+            conn = self.db_manager.get_connection()
+            if not conn:
+                return None
+
+            cursor = conn.cursor()
+
+            # 查询最近25条记录用于CPK计算
+            cursor.execute(f"SELECT TOP 25 * FROM [{table_name}] ORDER BY date DESC, time DESC")
+            rows = cursor.fetchall()
+
+            if not rows:
+                self.db_manager.return_connection(conn)
+                return None
+
+            # 获取字段名
+            field_names = [desc[0] for desc in cursor.description]
+
+            # 根据实际数据计算CPK
+            cpk_data = self.calculate_real_cpk(rows, field_names, cpk_config, version, channel)
+            cpk_data['timestamp'] = time.time()
+
+            self.db_manager.return_connection(conn)
+            return cpk_data
+
+        except Exception as e:
+            logging.error(f"获取CPK数据失败: {e}")
+            return None
+
+    def get_cpk_config(self, version, channel):
+        """获取版本相关的CPK配置"""
+        try:
+            config = configparser.ConfigParser()
+            config.read('ProductSetup.ini', encoding='utf-8')
+
+            section_name = f'{version}_Channel_{channel}CPK'
+            if section_name not in config:
+                return None
+
+            cpk_config = dict(config[section_name])
+            logging.info(f"获取CPK配置: {section_name} -> {cpk_config}")
+            return cpk_config
+
+        except Exception as e:
+            logging.error(f"获取CPK配置失败: {e}")
+            return None
+
+    def calculate_real_cpk(self, rows, field_names, cpk_config, version, channel):
+        """根据实际数据计算CPK值"""
+        try:
+            cpk_data = {}
+
+            # 根据通道和版本确定需要计算的参数
+            param_mapping = self.get_cpk_param_mapping(version, channel)
+            logging.info(f"🔍 CPK参数映射: version={version}, channel={channel}, mapping={param_mapping}")
+
+            for param_key, field_info in param_mapping.items():
+                field_name = field_info['field']
+                config_key = field_info['config_key']
+                logging.info(f"🔍 处理参数: {param_key}, 字段: {field_name}, 配置键: {config_key}")
+
+                # 获取规格限
+                max_key = f"{config_key}_max"
+                min_key = f"{config_key}_min"
+                logging.info(f"🔍 查找配置键: {max_key}, {min_key}")
+                logging.info(f"🔍 可用配置: {list(cpk_config.keys())}")
+
+                if max_key not in cpk_config or min_key not in cpk_config:
+                    logging.warning(f"❌ CPK配置中缺少 {config_key} 的规格限")
+                    cpk_data[param_key] = 0.0
+                    continue
+
+                usl = float(cpk_config[max_key])
+                lsl = float(cpk_config[min_key])
+                logging.info(f"🔍 规格限: LSL={lsl}, USL={usl}")
+
+                # 提取字段数据
+                field_index = None
+                logging.info(f"🔍 可用字段: {field_names}")
+
+                # 尝试精确匹配
+                for i, name in enumerate(field_names):
+                    if name.lower() == field_name.lower():
+                        field_index = i
+                        break
+
+                # 如果精确匹配失败，尝试模糊匹配
+                if field_index is None:
+                    # 特殊处理一些已知的字段映射问题
+                    field_alternatives = []
+                    if field_name.lower() == 'p3l totalav':
+                        field_alternatives = ['p5l totalav', 'P5L totalAV', 'p3l totalav', 'P3L totalAV']
+                    elif field_name.lower() == 'p3 totalav':
+                        field_alternatives = ['p3 totalav', 'P3 totalAV', 'p3 totaoav', 'P3 totaoAV']  # 注意拼写错误
+
+                    for alt_field in field_alternatives:
+                        for i, name in enumerate(field_names):
+                            if name.lower() == alt_field.lower():
+                                field_index = i
+                                field_name = name  # 更新为实际找到的字段名
+                                logging.info(f"🔧 使用替代字段: {field_name}")
+                                break
+                        if field_index is not None:
+                            break
+
+                if field_index is None:
+                    logging.warning(f"❌ 未找到字段 {field_name} 在字段列表 {field_names} 中")
+                    cpk_data[param_key] = 0.0
+                    continue
+
+                # 提取数值数据
+                values = []
+                for row in rows:
+                    if row[field_index] is not None and isinstance(row[field_index], (int, float)):
+                        values.append(float(row[field_index]))
+
+                if len(values) < 2:
+                    cpk_data[param_key] = 0.0
+                    continue
+
+                # 计算CPK
+                avg = sum(values) / len(values)
+                range_val = max(values) - min(values)
+                cpk = self._calculate_cpk(avg, lsl, usl, range_val)
+                cpk_data[param_key] = cpk
+
+                logging.info(f"CPK计算: {param_key} = {cpk:.3f} (avg={avg:.2f}, range={range_val:.2f}, LSL={lsl}, USL={usl})")
+
+            return cpk_data
+
+        except Exception as e:
+            logging.error(f"计算CPK失败: {e}")
+            return {
+                'cpk_p1': 0.0,
+                'cpk_p5u': 0.0,
+                'cpk_p5l': 0.0,
+                'cpk_p3': 0.0,
+                'cpk_p4': 0.0
+            }
+
+    def get_cpk_param_mapping(self, version, channel):
+        """获取CPK参数映射关系"""
+        # 根据版本和通道返回参数映射
+        if version == 'G45':
+            if channel == 1:  # P1
+                return {
+                    'cpk_p1': {'field': 'p1 totalav', 'config_key': 't'}
+                }
+            elif channel == 2:  # P5L - 使用P3L totalAV字段
+                return {
+                    'cpk_p5l': {'field': 'p3l totalav', 'config_key': 'p3lt'}
+                }
+            elif channel == 3:  # P5U
+                return {
+                    'cpk_p5u': {'field': 'p5u totalav', 'config_key': 'p3ut'}
+                }
+            elif channel == 4:  # P3
+                return {
+                    'cpk_p3': {'field': 'p3 totalav', 'config_key': 'p5t'}
+                }
+            elif channel == 5:  # P4
+                return {
+                    'cpk_p4': {'field': 'p4av', 'config_key': 'p4'}
+                }
+        elif version == 'G48':
+            if channel == 1:  # P1
+                return {
+                    'cpk_p1': {'field': 'p1 totalav', 'config_key': 't'}
+                }
+            elif channel == 2:  # P5L - G48版本使用不同的字段名
+                return {
+                    'cpk_p5l': {'field': 'p5l totalav', 'config_key': 'p3lt'}
+                }
+            elif channel == 3:  # P5U
+                return {
+                    'cpk_p5u': {'field': 'p5u totalav', 'config_key': 'p3ut'}
+                }
+            elif channel == 4:  # P3
+                return {
+                    'cpk_p3': {'field': 'p3 totalav', 'config_key': 'p5t'}
+                }
+            elif channel == 5:  # P4
+                return {
+                    'cpk_p4': {'field': 'p4av', 'config_key': 'p4'}
+                }
+
+        return {}
+
+    def _calculate_cpk(self, avg, lsl, usl, range_val):
+        """计算CPK值"""
+        try:
+            # 计算标准差 (使用极差法估算)
+            # σ ≈ R/d2, 对于样本量25，d2约为3.931
+            d2 = 3.931
+            sigma = range_val / d2 if range_val > 0 else 0.001
+
+            # 计算CPK
+            cpu = (usl - avg) / (3 * sigma)  # 上限能力指数
+            cpl = (avg - lsl) / (3 * sigma)  # 下限能力指数
+            cpk = min(cpu, cpl)  # CPK取较小值
+
+            return max(0, cpk)  # CPK不能为负
+
+        except Exception as e:
+            logging.error(f"计算CPK失败: {e}")
+            return 0.0
 
     def setup_socket_events(self):
         """设置Socket.IO事件"""
