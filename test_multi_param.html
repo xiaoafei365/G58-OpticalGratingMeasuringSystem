@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多参数数据测试</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        
+        .test-controls {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        select, button {
+            margin: 5px;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        .results {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+        
+        .result-item {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: white;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .success {
+            border-left-color: #28a745;
+        }
+        
+        .error {
+            border-left-color: #dc3545;
+        }
+        
+        .data-preview {
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #f1f3f4;
+            padding: 5px;
+            border-radius: 3px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 多参数数据获取测试</h1>
+        
+        <div class="test-controls">
+            <select id="versionSelect">
+                <option value="G45">G45</option>
+                <option value="G48">G48</option>
+            </select>
+            
+            <select id="channelSelect">
+                <option value="1">通道1</option>
+                <option value="2">通道2</option>
+                <option value="3">通道3</option>
+                <option value="4">通道4</option>
+                <option value="5">通道5</option>
+            </select>
+            
+            <select id="paramSelect">
+                <option value="x1">X1</option>
+                <option value="x2">X2</option>
+                <option value="t">T</option>
+                <option value="m13m9">M13M9</option>
+                <option value="p3lt">P3LT</option>
+                <option value="p3ut">P3UT</option>
+                <option value="m6m8">M6M8</option>
+                <option value="p5t">P5T</option>
+                <option value="p4">P4</option>
+            </select>
+            
+            <select id="typeSelect">
+                <option value="avg">平均值</option>
+                <option value="rag">极差值</option>
+            </select>
+            
+            <select id="sideSelect">
+                <option value="L">左侧(L)</option>
+                <option value="R">右侧(R)</option>
+            </select>
+            
+            <button onclick="testSingleParam()">测试单个参数</button>
+            <button onclick="testAllParams()">测试所有参数</button>
+            <button onclick="clearResults()">清空结果</button>
+        </div>
+        
+        <div id="results" class="results">
+            <h3>测试结果</h3>
+            <div id="resultList">点击测试按钮开始测试...</div>
+        </div>
+    </div>
+
+    <script>
+        // 测试单个参数
+        async function testSingleParam() {
+            const version = document.getElementById('versionSelect').value;
+            const channel = document.getElementById('channelSelect').value;
+            const param = document.getElementById('paramSelect').value;
+            const type = document.getElementById('typeSelect').value;
+            const side = document.getElementById('sideSelect').value;
+            
+            await testParam(version, channel, param, type, side);
+        }
+
+        // 测试所有参数
+        async function testAllParams() {
+            const version = document.getElementById('versionSelect').value;
+            const channel = document.getElementById('channelSelect').value;
+            const side = document.getElementById('sideSelect').value;
+            
+            const params = ['x1', 'x2', 't', 'm13m9', 'p3lt', 'p3ut', 'm6m8', 'p5t', 'p4'];
+            const types = ['avg', 'rag'];
+            
+            for (const param of params) {
+                for (const type of types) {
+                    await testParam(version, channel, param, type, side);
+                    // 添加小延迟避免请求过快
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+        }
+
+        // 测试指定参数
+        async function testParam(version, channel, param, type, side) {
+            const resultList = document.getElementById('resultList');
+            
+            try {
+                const url = `/api/get_chart_data/${version}/${channel}/${param}/${type}/${side}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'result-item';
+                
+                if (data.status === 'success') {
+                    resultDiv.classList.add('success');
+                    const dataPreview = data.data.slice(0, 5).map(p => p.y.toFixed(2)).join(', ');
+                    resultDiv.innerHTML = `
+                        <strong>✅ ${version}_Channel_${channel}_${param}_${type}_${side}</strong><br>
+                        数据源: ${data.source}<br>
+                        数据点数: ${data.data.length}<br>
+                        <div class="data-preview">前5个数据点: [${dataPreview}...]</div>
+                    `;
+                } else {
+                    resultDiv.classList.add('error');
+                    resultDiv.innerHTML = `
+                        <strong>❌ ${version}_Channel_${channel}_${param}_${type}_${side}</strong><br>
+                        错误: ${data.message}
+                    `;
+                }
+                
+                resultList.appendChild(resultDiv);
+                resultList.scrollTop = resultList.scrollHeight;
+                
+            } catch (error) {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'result-item error';
+                resultDiv.innerHTML = `
+                    <strong>❌ ${version}_Channel_${channel}_${param}_${type}_${side}</strong><br>
+                    请求失败: ${error.message}
+                `;
+                resultList.appendChild(resultDiv);
+            }
+        }
+
+        // 清空结果
+        function clearResults() {
+            document.getElementById('resultList').innerHTML = '点击测试按钮开始测试...';
+        }
+    </script>
+</body>
+</html>

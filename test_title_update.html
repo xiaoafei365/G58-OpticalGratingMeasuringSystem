@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>标题更新测试</title>
+    <style>
+        .title-bar {
+            background-color: #2c3e50;
+            color: white;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+        }
+        
+        .title-text {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .test-buttons {
+            margin: 20px;
+        }
+        
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="title-bar">
+        <div class="title-text">G45-L-P1X光栅测量系统 - Web版</div>
+    </div>
+    
+    <div class="test-buttons">
+        <h3>测试标题更新功能</h3>
+        <button onclick="updatePageTitle('G45')">切换到G45</button>
+        <button onclick="updatePageTitle('G48')">切换到G48</button>
+        <button onclick="updateGratingTitle('G45-L-P1')">选择G45-L-P1</button>
+        <button onclick="updateGratingTitle('G48-R-P3')">选择G48-R-P3</button>
+    </div>
+
+    <script>
+        // 更新页面标题 (版本切换时使用)
+        function updatePageTitle(version) {
+            // 更新浏览器标题
+            document.title = `${version}-L-P1X光栅测量系统 - Web版`;
+            
+            // 更新左上角的标题文本
+            const titleElement = document.querySelector('.title-text');
+            if (titleElement) {
+                titleElement.textContent = `${version}-L-P1X光栅测量系统 - Web版`;
+            }
+        }
+
+        // 更新磁栅尺选择标题 (磁栅尺选择时使用)
+        function updateGratingTitle(gratingName) {
+            // 更新浏览器标题
+            document.title = `${gratingName}光栅测量系统 - Web版`;
+            
+            // 更新左上角的标题文本
+            const titleElement = document.querySelector('.title-text');
+            if (titleElement) {
+                titleElement.textContent = `${gratingName}光栅测量系统 - Web版`;
+            }
+        }
+    </script>
+</body>
+</html>

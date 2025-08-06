@@ -177,6 +177,76 @@
             background-color: #95a5a6;
             cursor: not-allowed;
         }
+
+        /* 数据源开关样式 */
+        .data-source-switch {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            gap: 10px;
+        }
+
+        .switch-label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 120px;
+            height: 34px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #e74c3c;
+            transition: .4s;
+            border-radius: 17px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .slider {
+            background-color: #27ae60;
+        }
+
+        .toggle-switch input:checked + .slider:before {
+            transform: translateX(86px);
+        }
+
+        .slider-text {
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 1;
+        }
         
         .loading {
             text-align: center;
@@ -218,6 +288,15 @@
             </div>
             
             <div class="save-panel" id="savePanel" style="display: none;">
+                <div class="data-source-switch">
+                    <label class="switch-label">数据源：</label>
+                    <div class="toggle-switch" id="dataSourceToggle">
+                        <input type="checkbox" id="dataSourceCheckbox" checked>
+                        <span class="slider">
+                            <span class="slider-text" id="sliderText">实际值</span>
+                        </span>
+                    </div>
+                </div>
                 <button class="save-btn" id="saveBtn">保存设置</button>
                 <button class="cancel-btn" id="cancelBtn">取消</button>
             </div>
@@ -243,12 +322,24 @@
                     selectChannel(this.dataset.channel);
                 });
             });
-            
+
             // 保存按钮 - 修复选择器
             document.getElementById('saveBtn').addEventListener('click', saveConfig);
-            
+
             // 取消按钮 - 修复选择器
             document.getElementById('cancelBtn').addEventListener('click', cancelChanges);
+
+            // 数据源开关事件
+            document.getElementById('dataSourceCheckbox').addEventListener('change', function() {
+                updateDataSourceDisplay();
+                // 通知主页面数据源已更改
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({
+                        type: 'dataSourceChanged',
+                        useRealData: this.checked
+                    }, '*');
+                }
+            });
         }
         
         function selectChannel(channel) {
@@ -293,7 +384,9 @@
                     return response.json();
                 })
                 .then(data => {
-                    console.log('接收到的数据:', data);
+                    console.log('接收到的完整数据:', data);
+                    console.log('配置项数量:', Object.keys(data.config || {}).length);
+                    console.log('所有配置键:', Object.keys(data.config || {}));
                     
                     if (data.status === 'success') {
                         configData = data.config;
@@ -332,6 +425,7 @@
                 tableHTML += `
                     <thead>
                         <tr>
+                            <th>通道</th>
                             <th>参数名称</th>
                             <th>最大值</th>
                             <th>最小值</th>
@@ -340,29 +434,86 @@
                     <tbody>
                 `;
                 
-                // 获取所有参数名（去除_MAX/_MIN后缀）
-                const paramNames = new Set();
+                // 键名到显示名称的映射
+                const keyToDisplayName = {
+                    'X1': 'X1',
+                    'X2': 'X2', 
+                    'T': 'T',
+                    'M13M9': 'M13M9',
+                    'P3LT': 'P3LT',
+                    'P3UT': 'P3UT',
+                    'M6M8': 'M6M8',
+                    'P5T': 'P5T',
+                    'P4': 'P4'
+                };
+                
+                // 通道号到通道名称的映射
+                const channelNames = {
+                    'G45': {
+                        '1': 'G45-P1',
+                        '2': 'G45-P5L', 
+                        '3': 'G45-P5U',
+                        '4': 'G45-P3',
+                        '5': 'G45-P4'
+                    },
+                    'G48': {
+                        '1': 'G48-P1',
+                        '2': 'G48-P5L',
+                        '3': 'G48-P5U', 
+                        '4': 'G48-P3',
+                        '5': 'G48-P4'
+                    }
+                };
+                
+                // 确定当前是G45还是G48
+                const gratingType = channel.startsWith('G45') ? 'G45' : 'G48';
+                
+                // 按通道分组参数
+                const channelGroups = {};
+                
                 for (const key of Object.keys(data)) {
-                    if (key.toUpperCase().endsWith('_MAX') || key.toUpperCase().endsWith('_MIN')) {
-                        const baseName = key.replace(/_MAX|_MIN$/i, '');
-                        paramNames.add(baseName);
+                    // 解析键名格式: ch1_x1_max, ch2_t_min 等
+                    const match = key.match(/^ch(\d+)_(.+)_(max|min)$/);
+                    if (match) {
+                        const channelNum = match[1];
+                        const paramName = match[2].toUpperCase();
+                        const limitType = match[3];
+                        
+                        if (!channelGroups[channelNum]) {
+                            channelGroups[channelNum] = {};
+                        }
+                        if (!channelGroups[channelNum][paramName]) {
+                            channelGroups[channelNum][paramName] = {};
+                        }
+                        
+                        channelGroups[channelNum][paramName][limitType] = {
+                            key: key,
+                            value: parseFloat(data[key]).toFixed(2)
+                        };
                     }
                 }
                 
-                // 为每个参数创建一行
-                for (const paramName of Array.from(paramNames).sort()) {
-                    const maxKey = Object.keys(data).find(k => k.toLowerCase() === (paramName + '_max').toLowerCase());
-                    const minKey = Object.keys(data).find(k => k.toLowerCase() === (paramName + '_min').toLowerCase());
-                    const maxValue = maxKey ? parseFloat(data[maxKey]).toFixed(2) : '0.00';
-                    const minValue = minKey ? parseFloat(data[minKey]).toFixed(2) : '0.00';
-                    
-                    tableHTML += `
-                        <tr>
-                            <td class="param-name">${paramName}</td>
-                            <td><input type="number" class="param-input" data-key="${maxKey || paramName + '_MAX'}" value="${maxValue}" step="0.01"></td>
-                            <td><input type="number" class="param-input" data-key="${minKey || paramName + '_MIN'}" value="${minValue}" step="0.01"></td>
-                        </tr>
-                    `;
+                console.log('CPK通道分组结果:', channelGroups);
+                
+                // 为每个通道的每个参数创建一行
+                for (const [channelNum, channelParams] of Object.entries(channelGroups).sort()) {
+                    for (const [paramName, paramData] of Object.entries(channelParams).sort()) {
+                        const displayName = keyToDisplayName[paramName] || paramName;
+                        const channelDisplayName = channelNames[gratingType][channelNum] || `${gratingType}-CH${channelNum}`;
+                        const maxValue = paramData.max?.value || '0.00';
+                        const minValue = paramData.min?.value || '0.00';
+                        const maxKey = paramData.max?.key || '';
+                        const minKey = paramData.min?.key || '';
+                        
+                        tableHTML += `
+                            <tr>
+                                <td class="param-name">${channelDisplayName}</td>
+                                <td class="param-name">${displayName}</td>
+                                <td><input type="number" class="param-input" data-key="${maxKey}" value="${maxValue}" step="0.01"></td>
+                                <td><input type="number" class="param-input" data-key="${minKey}" value="${minValue}" step="0.01"></td>
+                            </tr>
+                        `;
+                    }
                 }
             } else {
                 // 普通通道配置表格
@@ -490,9 +641,37 @@
             });
             document.getElementById('timeDisplay').textContent = timeString;
         }
+
+        function updateDataSourceDisplay() {
+            const checkbox = document.getElementById('dataSourceCheckbox');
+            const sliderText = document.getElementById('sliderText');
+
+            if (checkbox.checked) {
+                sliderText.textContent = '实际值';
+            } else {
+                sliderText.textContent = '模拟值';
+            }
+        }
+
+        // 获取当前数据源设置
+        function getDataSourceSetting() {
+            return document.getElementById('dataSourceCheckbox').checked;
+        }
+
+        // 设置数据源
+        function setDataSourceSetting(useRealData) {
+            document.getElementById('dataSourceCheckbox').checked = useRealData;
+            updateDataSourceDisplay();
+        }
     </script>
 </body>
 </html>
+
+
+
+
+
+
 
 
 
