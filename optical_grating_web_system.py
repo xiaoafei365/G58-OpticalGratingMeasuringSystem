@@ -314,19 +314,9 @@ class OpticalGratingWebSystem:
             
         self.setup_routes()
         self.setup_socket_events()
-        self._create_template_if_not_exists()
-    
-    def _create_template_if_not_exists(self):
-        """如果模板文件不存在则创建"""
-        template_path = os.path.join('templates', 'index.html')
-        if not os.path.exists(template_path):
-            logging.warning(f"模板文件不存在: {template_path}")
-            logging.info("请确保templates/index.html文件存在")
+       
 
-    def _create_index_template(self):
-        """创建index.html模板文件 - 已移除，使用独立的模板文件"""
-        pass
-    
+
     def setup_routes(self):
         """设置Web路由"""
         @self.app.route('/')
@@ -501,6 +491,25 @@ class OpticalGratingWebSystem:
                 
                 channel_config = config[channel]
                 
+                # 参数名映射 - 将前端参数名转换为ini文件中的键名
+                param_mapping = {
+                    'x1': 'x1',
+                    'x2': 'x2', 
+                    't': 't',
+                    'X1': 'x1',
+                    'X2': 'x2',
+                    'T': 't',
+                    'M13M9': 'm13m9',
+                    'P3LT': 'p3lt',
+                    'P3UT': 'p3ut',
+                    'M6M8': 'm6m8',
+                    'P5T': 'p5t',
+                    'P4': 'p4'
+                }
+                
+                # 获取实际的参数名
+                actual_param = param_mapping.get(param, param.lower())
+                
                 # 根据参数和图表类型获取配置
                 if chart_type == '平均值':
                     suffix = '_avg'
@@ -508,11 +517,11 @@ class OpticalGratingWebSystem:
                     suffix = '_rag'
                 
                 # 构建参数键名
-                ymax_key = f"{param}_ymax{suffix}"
-                ymin_key = f"{param}_ymin{suffix}"
-                base_key = f"{param}_base{suffix}"
-                halarm_key = f"{param}_halarm{suffix}"
-                lalarm_key = f"{param}_lalarm{suffix}"
+                ymax_key = f"{actual_param}_ymax{suffix}"
+                ymin_key = f"{actual_param}_ymin{suffix}"
+                base_key = f"{actual_param}_base{suffix}"
+                halarm_key = f"{actual_param}_halarm{suffix}"
+                lalarm_key = f"{actual_param}_lalarm{suffix}"
                 
                 # 获取配置值
                 config_data = {
@@ -670,8 +679,16 @@ if __name__ == "__main__":
             logging.StreamHandler()
         ]
     )
-    
+
     system = OpticalGratingWebSystem()
     system.run(host='0.0.0.0', port=5000, debug=True)
+ 
+
+
+
+
+
+
+
 
 

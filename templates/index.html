@@ -280,7 +280,10 @@
         document.addEventListener('DOMContentLoaded', function() {
             initializeSocket();
             initializeEventListeners();
-            createChartsForGrating(currentGrating);
+            
+            // 设置默认选择
+            selectGrating('G45_Channel_1');
+            
             updateTimeDisplay();
             setInterval(updateTimeDisplay, 1000);
         });
@@ -384,7 +387,7 @@
         }
         
         // 为指定磁栅尺创建图表
-        function createChartsForGrating(grating) {
+        async function createChartsForGrating(grating) {
             const chartArea = document.getElementById('chartArea');
             chartArea.innerHTML = ''; // 清空现有图表
             charts = {}; // 重置图表对象
@@ -392,7 +395,7 @@
             const params = gratingParams[grating] || [];
             
             // 创建图表容器
-            params.forEach(param => {
+            for (const param of params) {
                 // 平均值图表
                 const avgContainer = document.createElement('div');
                 avgContainer.className = 'chart-container';
@@ -418,138 +421,12 @@
                 chartArea.appendChild(ragContainer);
                 
                 // 创建Chart.js图表
-                createChart(`chart_${param}_avg`, param, '平均值');
-                createChart(`chart_${param}_rag`, param, '极差值');
-            });
+                await createChart(`chart_${param}_avg`, param, '平均值');
+                await createChart(`chart_${param}_rag`, param, '极差值');
+            }
         }
         
-        // 创建单个图表
-        function createChart(canvasId, param, type) {
-            const ctx = document.getElementById(canvasId).getContext('2d');
-            
-            // 获取配置参数
-            const config = getChartConfig(param, type);
-            
-            const chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: Array.from({length: 25}, (_, i) => i + 1),
-                    datasets: [{
-                        label: `${param.toUpperCase()} ${type}`,
-                        data: Array(25).fill(config.baseValue),
-                        borderColor: '#2ecc71',
-                        backgroundColor: 'rgba(46, 204, 113, 0.1)',
-                        borderWidth: 2,
-                        pointRadius: 3,
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: `${param.toUpperCase()} - ${type}`,
-                            font: {
-                                size: 14,
-                                weight: 'bold'
-                            }
-                        },
-                        legend: {
-                            display: false
-                        },
-                        annotation: {
-                            annotations: {
-                                // 蓝色设定值线
-                                baseLine: {
-                                    type: 'line',
-                                    yMin: config.baseValue,
-                                    yMax: config.baseValue,
-                                    borderColor: '#3498db',
-                                    borderWidth: 2,
-                                    borderDash: [5, 5],
-                                    label: {
-                                        content: `设定值: ${config.baseValue}`,
-                                        enabled: true,
-                                        position: 'end'
-                                    }
-                                },
-                                // 红色上限线
-                                upperAlarmLine: {
-                                    type: 'line',
-                                    yMin: config.upperAlarm,
-                                    yMax: config.upperAlarm,
-                                    borderColor: '#e74c3c',
-                                    borderWidth: 2,
-                                    label: {
-                                        content: `上限: ${config.upperAlarm}`,
-                                        enabled: true,
-                                        position: 'end'
-                                    }
-                                },
-                                // 红色下限线
-                                lowerAlarmLine: {
-                                    type: 'line',
-                                    yMin: config.lowerAlarm,
-                                    yMax: config.lowerAlarm,
-                                    borderColor: '#e74c3c',
-                                    borderWidth: 2,
-                                    label: {
-                                        content: `下限: ${config.lowerAlarm}`,
-                                        enabled: true,
-                                        position: 'end'
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            title: {
-                                display: true,
-                                text: '测量点'
-                            },
-                            min: 1,
-                            max: 25
-                        },
-                        y: {
-                            title: {
-                                display: true,
-                                text: '测量值'
-                            },
-                            min: config.yMin,
-                            max: config.yMax
-                        }
-                    },
-                    animation: {
-                        duration: 0
-                    }
-                }
-            });
-            
-            charts[canvasId] = chart;
-        }
-        
-        // 获取图表配置参数
-        function getChartConfig(param, type) {
-            // 从后端获取配置数据
-            return fetch(`/api/get_chart_config/${currentGrating}/${param}/${type}`)
-                .then(response => response.json())
-                .then(data => data)
-                .catch(() => {
-                    // 默认配置
-                    return {
-                        yMin: 0,
-                        yMax: 100,
-                        baseValue: 50,
-                        upperAlarm: 80,
-                        lowerAlarm: 20
-                    };
-                });
-        }
-        
-        // 异步创建图表
+        // 创建单个图表 - 统一版本
         async function createChart(canvasId, param, type) {
             const ctx = document.getElementById(canvasId).getContext('2d');
             
@@ -607,61 +484,139 @@
                     animation: {
                         duration: 0
                     }
-                }
+                },
+                plugins: [{
+                    id: `referenceLines_${canvasId}`,
+                    afterDraw: function(chart) {
+                        const ctx = chart.ctx;
+                        const chartArea = chart.chartArea;
+                        const yScale = chart.scales.y;
+                        
+                        ctx.save();
+                        
+                        // 对所有图表显示参考线（平均值和极差值都显示）
+                        // 蓝色设定值线
+                        if (config.baseValue !== undefined) {
+                            const baseY = yScale.getPixelForValue(config.baseValue);
+                            ctx.strokeStyle = '#3498db';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([5, 5]);
+                            ctx.beginPath();
+                            ctx.moveTo(chartArea.left, baseY);
+                            ctx.lineTo(chartArea.right, baseY);
+                            ctx.stroke();
+                        }
+                        
+                        // 红色上限线
+                        if (config.upperAlarm !== undefined) {
+                            const upperY = yScale.getPixelForValue(config.upperAlarm);
+                            ctx.strokeStyle = '#e74c3c';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([]);
+                            ctx.beginPath();
+                            ctx.moveTo(chartArea.left, upperY);
+                            ctx.lineTo(chartArea.right, upperY);
+                            ctx.stroke();
+                        }
+                        
+                        // 红色下限线
+                        if (config.lowerAlarm !== undefined) {
+                            const lowerY = yScale.getPixelForValue(config.lowerAlarm);
+                            ctx.strokeStyle = '#e74c3c';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([]);
+                            ctx.beginPath();
+                            ctx.moveTo(chartArea.left, lowerY);
+                            ctx.lineTo(chartArea.right, lowerY);
+                            ctx.stroke();
+                        }
+                        
+                        ctx.restore();
+                    }
+                }]
             });
-            
-            // 添加参考线
-            addReferenceLines(chart, config);
             
             charts[canvasId] = chart;
         }
         
+        // 获取图表配置参数
+        function getChartConfig(param, type) {
+            // 从后端API获取实际配置数据
+            const channel = currentGrating;  // 直接使用currentGrating
+            return fetch(`/api/get_chart_config/${channel}/${param}/${type}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('获取图表配置失败:', data.error);
+                        // 返回默认配置
+                        return {
+                            yMin: 0, yMax: 100, baseValue: 50, upperAlarm: 80, lowerAlarm: 20
+                        };
+                    }
+                    return {
+                        yMin: data.yMin,
+                        yMax: data.yMax,
+                        baseValue: data.baseValue,
+                        upperAlarm: data.upperAlarm,
+                        lowerAlarm: data.lowerAlarm
+                    };
+                })
+                .catch(error => {
+                    console.error('获取图表配置失败:', error);
+                    // 返回默认配置
+                    return {
+                        yMin: 0, yMax: 100, baseValue: 50, upperAlarm: 80, lowerAlarm: 20
+                    };
+                });
+        }
+        
+        
+        
         // 添加参考线
         function addReferenceLines(chart, config) {
-            const canvas = chart.canvas;
-            const ctx = canvas.getContext('2d');
-            
-            // 在图表绘制后添加参考线
+            // 注册插件来绘制参考线
             Chart.register({
                 id: 'referenceLines',
                 afterDraw: function(chart) {
-                    const ctx = chart.ctx;
-                    const chartArea = chart.chartArea;
-                    const yScale = chart.scales.y;
-                    
-                    ctx.save();
-                    
-                    // 蓝色设定值线
-                    const baseY = yScale.getPixelForValue(config.baseValue);
-                    ctx.strokeStyle = '#3498db';
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([5, 5]);
-                    ctx.beginPath();
-                    ctx.moveTo(chartArea.left, baseY);
-                    ctx.lineTo(chartArea.right, baseY);
-                    ctx.stroke();
-                    
-                    // 红色上限线
-                    const upperY = yScale.getPixelForValue(config.upperAlarm);
-                    ctx.strokeStyle = '#e74c3c';
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([]);
-                    ctx.beginPath();
-                    ctx.moveTo(chartArea.left, upperY);
-                    ctx.lineTo(chartArea.right, upperY);
-                    ctx.stroke();
-                    
-                    // 红色下限线
-                    const lowerY = yScale.getPixelForValue(config.lowerAlarm);
-                    ctx.strokeStyle = '#e74c3c';
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([]);
-                    ctx.beginPath();
-                    ctx.moveTo(chartArea.left, lowerY);
-                    ctx.lineTo(chartArea.right, lowerY);
-                    ctx.stroke();
-                    
-                    ctx.restore();
+                    if (currentGrating.includes('Channel') && chart.canvas.id.includes('avg')) {
+                        const ctx = chart.ctx;
+                        const chartArea = chart.chartArea;
+                        const yScale = chart.scales.y;
+                        
+                        ctx.save();
+                        
+                        // 蓝色设定值线
+                        const baseY = yScale.getPixelForValue(config.baseValue);
+                        ctx.strokeStyle = '#3498db';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([5, 5]);
+                        ctx.beginPath();
+                        ctx.moveTo(chartArea.left, baseY);
+                        ctx.lineTo(chartArea.right, baseY);
+                        ctx.stroke();
+                        
+                        // 红色上限线
+                        const upperY = yScale.getPixelForValue(config.upperAlarm);
+                        ctx.strokeStyle = '#e74c3c';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([]);
+                        ctx.beginPath();
+                        ctx.moveTo(chartArea.left, upperY);
+                        ctx.lineTo(chartArea.right, upperY);
+                        ctx.stroke();
+                        
+                        // 红色下限线
+                        const lowerY = yScale.getPixelForValue(config.lowerAlarm);
+                        ctx.strokeStyle = '#e74c3c';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([]);
+                        ctx.beginPath();
+                        ctx.moveTo(chartArea.left, lowerY);
+                        ctx.lineTo(chartArea.right, lowerY);
+                        ctx.stroke();
+                        
+                        ctx.restore();
+                    }
                 }
             });
         }
@@ -784,7 +739,6 @@
     </script>
 </body>
 </html>
-
 
 
 
