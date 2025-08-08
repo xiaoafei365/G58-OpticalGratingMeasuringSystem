@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modbus TCP设备控制</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            padding: 30px;
+        }
+
+        .device-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .device-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .device-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+        }
+
+        .device-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .device-header h3 {
+            font-size: 1.4em;
+            margin-bottom: 5px;
+        }
+
+        .device-header .device-ip {
+            opacity: 0.8;
+            font-size: 0.9em;
+        }
+
+        .device-body {
+            padding: 25px;
+        }
+
+        .status-section {
+            margin-bottom: 25px;
+        }
+
+        .status-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+
+        .status-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            margin-right: 10px;
+            border-radius: 2px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+            gap: 10px;
+        }
+
+        .status-item {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .status-item.active {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-color: #4facfe;
+            transform: scale(1.05);
+        }
+
+        .status-item.inactive {
+            background: #f8f9fa;
+            color: #6c757d;
+            border-color: #dee2e6;
+        }
+
+        .status-label {
+            font-size: 0.9em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 0.8em;
+            opacity: 0.8;
+        }
+
+        .control-section {
+            margin-top: 25px;
+            padding-top: 25px;
+            border-top: 2px solid #e9ecef;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+        }
+
+        .control-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .control-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .control-button:active {
+            transform: translateY(0);
+        }
+
+        .control-button.danger {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+        }
+
+        .control-button.danger:hover {
+            box-shadow: 0 8px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        .monitoring-panel {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            padding: 25px;
+            margin-top: 30px;
+        }
+
+        .monitoring-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .monitoring-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .monitoring-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.connected {
+            background: #28a745;
+            box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+        }
+
+        .status-indicator.disconnected {
+            background: #dc3545;
+            box-shadow: 0 0 10px rgba(220, 53, 69, 0.5);
+        }
+
+        .log-area {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+
+        .log-entry.info {
+            color: #007bff;
+        }
+
+        .log-entry.success {
+            color: #28a745;
+        }
+
+        .log-entry.error {
+            color: #dc3545;
+        }
+
+        .log-entry.warning {
+            color: #ffc107;
+        }
+
+        .refresh-button {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .refresh-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(40, 167, 69, 0.4);
+        }
+
+        @media (max-width: 768px) {
+            .device-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .control-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .monitoring-header {
+                flex-direction: column;
+                gap: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Modbus TCP设备控制中心</h1>
+            <p>实时监控和控制您的Modbus TCP设备</p>
+        </div>
+
+        <div class="main-content">
+            <div id="deviceGrid" class="device-grid">
+                <!-- 设备卡片将通过JavaScript动态生成 -->
+            </div>
+
+            <div class="monitoring-panel">
+                <div class="monitoring-header">
+                    <h3 class="monitoring-title">
+                        <span class="status-indicator" id="connectionStatus"></span>
+                        系统监控
+                    </h3>
+                    <div class="monitoring-controls">
+                        <button class="refresh-button" onclick="refreshDevices()">刷新设备</button>
+                        <button class="control-button" id="monitoringToggle" onclick="toggleMonitoring()">
+                            启动监控
+                        </button>
+                    </div>
+                </div>
+                <div id="logArea" class="log-area">
+                    <div class="log-entry info">[系统] 页面加载完成，正在连接服务器...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Socket.IO连接
+        const socket = io();
+        let devices = {};
+        let monitoringActive = false;
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSystem();
+        });
+
+        function initializeSystem() {
+            addLog('系统初始化中...', 'info');
+            loadDevices();
+            setupSocketEvents();
+        }
+
+        function setupSocketEvents() {
+            socket.on('connect', function() {
+                addLog('已连接到服务器', 'success');
+                updateConnectionStatus(true);
+            });
+
+            socket.on('disconnect', function() {
+                addLog('与服务器断开连接', 'error');
+                updateConnectionStatus(false);
+            });
+
+            socket.on('device_status_change', function(data) {
+                addLog(`设备状态变化: ${data.device_id} - ${data.type}`, 'info');
+                updateDeviceStatus(data.device_id);
+            });
+
+            socket.on('tcp_device_status_update', function(data) {
+                updateDeviceDisplay(data);
+            });
+
+            socket.on('tcp_device_control_result', function(data) {
+                const message = `控制结果: ${data.message}`;
+                addLog(message, data.success ? 'success' : 'error');
+            });
+
+            socket.on('tcp_device_monitoring_status', function(data) {
+                monitoringActive = data.active;
+                updateMonitoringButton();
+                addLog(data.message, data.active ? 'success' : 'info');
+            });
+        }
+
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/modbus_tcp/devices');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    devices = {};
+                    data.devices.forEach(device => {
+                        devices[device.device_id] = device;
+                    });
+                    renderDevices();
+                    addLog(`加载了 ${data.count} 个设备`, 'success');
+                } else {
+                    addLog(`加载设备失败: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                addLog(`加载设备时发生错误: ${error.message}`, 'error');
+            }
+        }
+
+        function renderDevices() {
+            const deviceGrid = document.getElementById('deviceGrid');
+            deviceGrid.innerHTML = '';
+
+            Object.values(devices).forEach(device => {
+                const deviceCard = createDeviceCard(device);
+                deviceGrid.appendChild(deviceCard);
+
+                // 加载设备状态
+                updateDeviceStatus(device.device_id);
+            });
+        }
+
+        function createDeviceCard(device) {
+            const card = document.createElement('div');
+            card.className = 'device-card';
+            card.id = `device-${device.device_id}`;
+
+            card.innerHTML = `
+                <div class="device-header">
+                    <h3>${device.device_name || device.device_id}</h3>
+                    <div class="device-ip">${device.ip_address}:${device.modbus_port}</div>
+                </div>
+                <div class="device-body">
+                    <div class="status-section">
+                        <div class="status-title">DI状态</div>
+                        <div class="status-grid" id="di-status-${device.device_id}">
+                            ${Array.from({length: 8}, (_, i) => `
+                                <div class="status-item inactive" id="di${i+1}-${device.device_id}">
+                                    <div class="status-label">DI${i+1}</div>
+                                    <div class="status-value">低电平</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="status-section">
+                        <div class="status-title">DO状态</div>
+                        <div class="status-grid" id="do-status-${device.device_id}">
+                            ${Array.from({length: 2}, (_, i) => `
+                                <div class="status-item inactive" id="do${i+1}-${device.device_id}">
+                                    <div class="status-label">DO${i+1}</div>
+                                    <div class="status-value">低电平</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="control-section">
+                        <div class="status-title">DO控制</div>
+                        <div class="control-grid">
+                            <button class="control-button" onclick="controlDO('${device.device_id}', 1, true)">
+                                DO1 开
+                            </button>
+                            <button class="control-button danger" onclick="controlDO('${device.device_id}', 1, false)">
+                                DO1 关
+                            </button>
+                            <button class="control-button" onclick="controlDO('${device.device_id}', 2, true)">
+                                DO2 开
+                            </button>
+                            <button class="control-button danger" onclick="controlDO('${device.device_id}', 2, false)">
+                                DO2 关
+                            </button>
+                            <button class="control-button" onclick="controlAllDO('${device.device_id}', true, true)">
+                                全部开
+                            </button>
+                            <button class="control-button danger" onclick="controlAllDO('${device.device_id}', false, false)">
+                                全部关
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            return card;
+        }
+
+        async function updateDeviceStatus(deviceId) {
+            try {
+                // 获取DI状态
+                const diResponse = await fetch(`/api/modbus_tcp/device/${deviceId}/di_status`);
+                const diData = await diResponse.json();
+
+                if (diData.status === 'success') {
+                    updateDIDisplay(deviceId, diData.data.status);
+                }
+
+                // 获取DO状态
+                const doResponse = await fetch(`/api/modbus_tcp/device/${deviceId}/do_status`);
+                const doData = await doResponse.json();
+
+                if (doData.status === 'success') {
+                    updateDODisplay(deviceId, doData.data.status);
+                }
+            } catch (error) {
+                addLog(`更新设备 ${deviceId} 状态失败: ${error.message}`, 'error');
+            }
+        }
+
+        function updateDIDisplay(deviceId, diStatus) {
+            Object.entries(diStatus).forEach(([diName, state]) => {
+                const element = document.getElementById(`${diName.toLowerCase()}-${deviceId}`);
+                if (element) {
+                    element.className = `status-item ${state ? 'active' : 'inactive'}`;
+                    element.querySelector('.status-value').textContent = state ? '高电平' : '低电平';
+                }
+            });
+        }
+
+        function updateDODisplay(deviceId, doStatus) {
+            Object.entries(doStatus).forEach(([doName, state]) => {
+                const element = document.getElementById(`${doName.toLowerCase()}-${deviceId}`);
+                if (element) {
+                    element.className = `status-item ${state ? 'active' : 'inactive'}`;
+                    element.querySelector('.status-value').textContent = state ? '高电平' : '低电平';
+                }
+            });
+        }
+
+        function updateDeviceDisplay(data) {
+            if (data.di_status) {
+                updateDIDisplay(data.device_id, data.di_status.status);
+            }
+            if (data.do_status) {
+                updateDODisplay(data.device_id, data.do_status.status);
+            }
+        }
+
+        async function controlDO(deviceId, doNum, state) {
+            try {
+                const response = await fetch(`/api/modbus_tcp/device/${deviceId}/do_control`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        do_num: doNum,
+                        state: state
+                    })
+                });
+
+                const data = await response.json();
+                addLog(data.message, data.status === 'success' ? 'success' : 'error');
+
+                if (data.status === 'success') {
+                    // 更新显示
+                    setTimeout(() => updateDeviceStatus(deviceId), 100);
+                }
+            } catch (error) {
+                addLog(`控制DO失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function controlAllDO(deviceId, do1State, do2State) {
+            try {
+                const response = await fetch(`/api/modbus_tcp/device/${deviceId}/do_control`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        do1_state: do1State,
+                        do2_state: do2State
+                    })
+                });
+
+                const data = await response.json();
+                addLog(data.message, data.status === 'success' ? 'success' : 'error');
+
+                if (data.status === 'success') {
+                    // 更新显示
+                    setTimeout(() => updateDeviceStatus(deviceId), 100);
+                }
+            } catch (error) {
+                addLog(`控制所有DO失败: ${error.message}`, 'error');
+            }
+        }
+
+        function toggleMonitoring() {
+            if (monitoringActive) {
+                socket.emit('stop_tcp_device_monitoring');
+            } else {
+                socket.emit('start_tcp_device_monitoring', { interval: 1.0 });
+            }
+        }
+
+        function updateMonitoringButton() {
+            const button = document.getElementById('monitoringToggle');
+            button.textContent = monitoringActive ? '停止监控' : '启动监控';
+            button.className = monitoringActive ? 'control-button danger' : 'control-button';
+        }
+
+        function refreshDevices() {
+            addLog('正在刷新设备列表...', 'info');
+            loadDevices();
+        }
+
+        function updateConnectionStatus(connected) {
+            const indicator = document.getElementById('connectionStatus');
+            indicator.className = `status-indicator ${connected ? 'connected' : 'disconnected'}`;
+        }
+
+        function addLog(message, type = 'info') {
+            const logArea = document.getElementById('logArea');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${timestamp}] ${message}`;
+
+            logArea.appendChild(logEntry);
+            logArea.scrollTop = logArea.scrollHeight;
+
+            // 限制日志条目数量
+            const entries = logArea.querySelectorAll('.log-entry');
+            if (entries.length > 100) {
+                entries[0].remove();
+            }
+        }
+
+        // 定期刷新设备状态
+        setInterval(() => {
+            if (!monitoringActive) {
+                Object.keys(devices).forEach(deviceId => {
+                    updateDeviceStatus(deviceId);
+                });
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

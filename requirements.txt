@@ -1,0 +1,4 @@
+# Modbus TCP通讯所需的依赖包
+# 注意：当前的modbus_device.py使用原生socket实现，不需要额外依赖
+# 如果需要使用pymodbus库，可以取消下面的注释
+# pymodbus>=3.0.0

@@ -7,13 +7,16 @@ import logging
 import json
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import queue
 from threading import Lock
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 import os
+import hashlib
+import secrets
+import pickle
 
 # 数据库访问模块
 try:
@@ -23,9 +26,158 @@ except ImportError:
     DATABASE_AVAILABLE = False
     logging.warning("pyodbc模块未安装，将使用模拟数据")
 
+# Modbus TCP设备模块
+try:
+    from modbus_device import ModbusTCPDevice
+    MODBUS_TCP_AVAILABLE = True
+except ImportError:
+    MODBUS_TCP_AVAILABLE = False
+    logging.warning("modbus_device模块未找到，Modbus TCP功能将不可用")
+
 # 在类初始化之前确保templates目录存在
 if not os.path.exists('templates'):
     os.makedirs('templates')
+
+class TrialManager:
+    """试用期管理类"""
+
+    def __init__(self, trial_file: str = "trial_info.dat"):
+        self.trial_file = trial_file
+        self.trial_days = 1  # 试用期30天
+        self.is_locked = False
+        self.start_time = None
+        self.used_codes = set()
+        self.is_unlimited = False
+
+        # 预生成的验证码
+        self.extend_codes = [
+            "EXTEND2025A1", "EXTEND2025B2", "EXTEND2025C3", "EXTEND2025D4", "EXTEND2025E5",
+            "EXTEND2025F6", "EXTEND2025G7", "EXTEND2025H8", "EXTEND2025I9", "EXTEND2025J0"
+        ]
+        self.unlock_code = "UNLOCK2025FOREVER"
+
+        self._load_trial_info()
+
+    def _load_trial_info(self):
+        """加载试用期信息"""
+        try:
+            if os.path.exists(self.trial_file):
+                with open(self.trial_file, 'rb') as f:
+                    data = pickle.load(f)
+                    self.start_time = data.get('start_time')
+                    self.used_codes = set(data.get('used_codes', []))
+                    self.is_unlimited = data.get('is_unlimited', False)
+                    logging.info(f"试用期信息加载成功，开始时间: {self.start_time}")
+            else:
+                # 首次运行，记录开始时间
+                self.start_time = datetime.now()
+                self._save_trial_info()
+                logging.info(f"首次运行，试用期开始: {self.start_time}")
+        except Exception as e:
+            logging.error(f"加载试用期信息失败: {e}")
+            self.start_time = datetime.now()
+            self._save_trial_info()
+
+    def _save_trial_info(self):
+        """保存试用期信息"""
+        try:
+            data = {
+                'start_time': self.start_time,
+                'used_codes': list(self.used_codes),
+                'is_unlimited': self.is_unlimited
+            }
+            with open(self.trial_file, 'wb') as f:
+                pickle.dump(data, f)
+        except Exception as e:
+            logging.error(f"保存试用期信息失败: {e}")
+
+    def get_trial_status(self) -> Dict:
+        """获取试用期状态"""
+        if self.is_unlimited:
+            return {
+                'is_trial': False,
+                'is_expired': False,
+                'days_used': 0,
+                'days_remaining': -1,
+                'message': '系统已解锁，无使用限制'
+            }
+
+        if not self.start_time:
+            return {
+                'is_trial': True,
+                'is_expired': True,
+                'days_used': 0,
+                'days_remaining': 0,
+                'message': '试用期信息异常'
+            }
+
+        now = datetime.now()
+        days_used = (now - self.start_time).days
+        days_remaining = max(0, self.trial_days - days_used)
+        is_expired = days_remaining <= 0
+
+        return {
+            'is_trial': True,
+            'is_expired': is_expired,
+            'days_used': days_used,
+            'days_remaining': days_remaining,
+            'message': f'试用期剩余 {days_remaining} 天' if not is_expired else '试用期已到期'
+        }
+
+    def is_system_locked(self) -> bool:
+        """检查系统是否被锁定"""
+        if self.is_unlimited:
+            return False
+
+        status = self.get_trial_status()
+        return status['is_expired']
+
+    def verify_code(self, code: str) -> Dict:
+        """验证验证码"""
+        code = code.strip().upper()
+
+        # 检查是否是解锁码
+        if code == self.unlock_code:
+            self.is_unlimited = True
+            self._save_trial_info()
+            logging.info("系统已永久解锁")
+            return {
+                'success': True,
+                'type': 'unlock',
+                'message': '系统已永久解锁，无使用限制'
+            }
+
+        # 检查是否是延期码
+        if code in self.extend_codes:
+            if code in self.used_codes:
+                return {
+                    'success': False,
+                    'type': 'extend',
+                    'message': '此验证码已使用过，请使用新的验证码'
+                }
+
+            # 延长试用期30天
+            self.used_codes.add(code)
+            if self.start_time:
+                self.start_time = self.start_time - timedelta(days=30)
+            else:
+                self.start_time = datetime.now() - timedelta(days=30)
+
+            self._save_trial_info()
+            logging.info(f"试用期已延长30天，验证码: {code}")
+
+            status = self.get_trial_status()
+            return {
+                'success': True,
+                'type': 'extend',
+                'message': f'试用期已延长30天，剩余 {status["days_remaining"]} 天'
+            }
+
+        return {
+            'success': False,
+            'type': 'invalid',
+            'message': '验证码无效，请检查后重新输入'
+        }
 
 class DatabaseManager:
     """数据库管理类 - 用于访问guangshan.mdb中的_25表数据"""
@@ -586,46 +738,335 @@ class ModbusCommunication:
         self.com_settings = com_settings
         self.serial_conn = None
         self.simulation_mode = True
-        
+
+        # RS485-MODBUS通讯参数 (根据文档)
+        self.MODBUS_PARAMS = {
+            'protocol': 'RS485',
+            'format': 'RTU',
+            'data_bits': 8,
+            'stop_bits': 1,
+            'parity': 'None',
+            'address_format': '16进制格式'
+        }
+
+        # 寄存器地址映射 (根据文档)
+        self.REGISTER_MAP = {
+            # 当前值寄存器 (读取)
+            'current_value': {
+                'address': 0x1000,  # 0x1000
+                'count': 2,
+                'range': '99999~-99999'
+            },
+            # 比例系数寄存器 (读取)
+            'scale_factor': {
+                'address': 0x1002,  # 0x1002
+                'count': 2,
+                'range': '1~29999(0.0001~2.9999)'
+            },
+            # 包络直径寄存器 (读取)
+            'envelope_diameter': {
+                'address': 0x1004,  # 0x1004
+                'count': 2,
+                'range': '1~40000mm'
+            },
+            # 多段补偿值寄存器 (读取)
+            'multi_compensation': {
+                'address': 0x1006,  # 0x1006
+                'count': 2,
+                'range': '0~9000mm'
+            },
+            # 测量方向寄存器 (读取)
+            'measurement_direction': {
+                'address': 0x2000,  # 0x2000
+                'count': 1,
+                'range': '0~1'
+            },
+            # 自校正寄存器 (读取)
+            'self_calibration': {
+                'address': 0x2001,  # 0x2001
+                'count': 1,
+                'range': '无'
+            }
+        }
+
+        # 主机写<16位寄存器>命令寄存器地址映射
+        self.WRITE_REGISTER_MAP = {
+            # 寄存器地址
+            'register_address': {
+                'address': 0x2002,  # 0x2002
+                'count': 1
+            },
+            # 寄存器个数
+            'register_count': {
+                'address': 0x2003,  # 0x2003
+                'count': 1
+            },
+            # 写字节数
+            'write_bytes': {
+                'address': 0x2004,  # 0x2004
+                'count': 1
+            },
+            # 寄存器数值
+            'register_value': {
+                'address': 0x2005,  # 0x2005
+                'count': 1
+            }
+        }
+
     def initialize_serial(self) -> bool:
         try:
+            # 根据RS485-MODBUS文档配置串口参数
             self.serial_conn = serial.Serial(
                 port=self.com_settings['port'],
                 baudrate=self.com_settings['baudrate'],
+                bytesize=8,  # 8位数据位
+                parity=serial.PARITY_NONE,  # 无校验
+                stopbits=1,  # 1位停止位
                 timeout=self.com_settings['timeout']
             )
             self.simulation_mode = False
-            logging.info(f"串口初始化成功: {self.com_settings['port']}")
+            logging.info(f"RS485串口初始化成功: {self.com_settings['port']}, 波特率: {self.com_settings['baudrate']}")
             return True
         except Exception as e:
-            logging.warning(f"串口初始化失败，启用模拟模式: {e}")
+            logging.warning(f"RS485串口初始化失败，启用模拟模式: {e}")
             self.simulation_mode = True
             return True
     
     def read_holding_registers(self, slave_addr: int, reg_addr: int, reg_count: int) -> Optional[List[int]]:
+        """
+        读取保持寄存器 (功能码0x03)
+        根据RS485-MODBUS通讯文档实现
+
+        Args:
+            slave_addr: 从机号 (1-247)
+            reg_addr: 寄存器地址 (16进制格式)
+            reg_count: 寄存器个数
+
+        Returns:
+            List[int]: 寄存器数据列表，失败返回None
+        """
         if self.simulation_mode:
-            # 模拟数据生成 - 与原程序逻辑一致
-            return [np.random.randint(1000, 2000) for _ in range(reg_count)]
-        
-        # 实际Modbus通信逻辑
+            # 模拟数据生成 - 根据寄存器类型生成合理数据
+            if reg_addr == 0x1000:  # 当前值
+                return [np.random.randint(-99999, 99999) & 0xFFFF for _ in range(reg_count)]
+            elif reg_addr == 0x1002:  # 比例系数
+                return [np.random.randint(1, 29999) for _ in range(reg_count)]
+            elif reg_addr == 0x1004:  # 包络直径
+                return [np.random.randint(1, 40000) for _ in range(reg_count)]
+            elif reg_addr == 0x1006:  # 多段补偿值
+                return [np.random.randint(0, 9000) for _ in range(reg_count)]
+            elif reg_addr == 0x2000:  # 测量方向
+                return [np.random.randint(0, 2)]
+            else:
+                return [np.random.randint(1000, 2000) for _ in range(reg_count)]
+
+        # 实际RS485 Modbus RTU通信逻辑
         try:
-            # 构建Modbus RTU请求
+            # 清空接收缓冲区
+            if self.serial_conn.in_waiting > 0:
+                self.serial_conn.reset_input_buffer()
+
+            # 构建Modbus RTU请求帧
+            # 格式: [从机地址][功能码][起始地址高][起始地址低][寄存器数量高][寄存器数量低][CRC低][CRC高]
             request = struct.pack('>BBHH', slave_addr, 0x03, reg_addr, reg_count)
             crc = self._calculate_crc(request)
-            request += struct.pack('<H', crc)
-            
+            request += struct.pack('<H', crc)  # CRC是小端格式
+
+            # 发送请求
             self.serial_conn.write(request)
-            response = self.serial_conn.read(5 + reg_count * 2)
-            
-            if len(response) >= 5:
-                data = struct.unpack(f'>{reg_count}H', response[3:-2])
-                return list(data)
+            logging.debug(f"发送Modbus请求: 从机{slave_addr}, 地址0x{reg_addr:04X}, 数量{reg_count}")
+
+            # 计算期望的响应长度: 从机地址(1) + 功能码(1) + 字节数(1) + 数据(reg_count*2) + CRC(2)
+            expected_length = 5 + reg_count * 2
+
+            # 读取响应
+            response = self.serial_conn.read(expected_length)
+
+            if len(response) < 5:
+                logging.error(f"响应数据长度不足: 期望{expected_length}, 实际{len(response)}")
+                return None
+
+            # 验证响应
+            if response[0] != slave_addr:
+                logging.error(f"从机地址不匹配: 期望{slave_addr}, 实际{response[0]}")
+                return None
+
+            if response[1] & 0x80:  # 检查错误标志
+                error_code = response[2]
+                logging.error(f"Modbus错误响应: 功能码{response[1]}, 错误码{error_code}")
+                return None
+
+            if response[1] != 0x03:
+                logging.error(f"功能码不匹配: 期望0x03, 实际0x{response[1]:02X}")
+                return None
+
+            # 验证CRC
+            received_crc = struct.unpack('<H', response[-2:])[0]
+            calculated_crc = self._calculate_crc(response[:-2])
+            if received_crc != calculated_crc:
+                logging.error(f"CRC校验失败: 接收0x{received_crc:04X}, 计算0x{calculated_crc:04X}")
+                return None
+
+            # 解析数据
+            byte_count = response[2]
+            if byte_count != reg_count * 2:
+                logging.error(f"数据字节数不匹配: 期望{reg_count * 2}, 实际{byte_count}")
+                return None
+
+            # 提取寄存器数据 (大端格式)
+            data = struct.unpack(f'>{reg_count}H', response[3:3+byte_count])
+            logging.debug(f"读取成功: 从机{slave_addr}, 数据{list(data)}")
+            return list(data)
+
         except Exception as e:
-            logging.error(f"Modbus通信错误: {e}")
-        
-        return None
+            logging.error(f"RS485 Modbus通信错误: {e}")
+            return None
     
+    def write_holding_registers(self, slave_addr: int, reg_addr: int, values: List[int]) -> bool:
+        """
+        写保持寄存器 (功能码0x10)
+        根据RS485-MODBUS通讯文档实现主机写<16位寄存器>命令
+
+        Args:
+            slave_addr: 从机号 (1-247)
+            reg_addr: 寄存器地址 (16进制格式)
+            values: 要写入的数据列表
+
+        Returns:
+            bool: 写入是否成功
+        """
+        if self.simulation_mode:
+            logging.info(f"模拟模式: 写入从机{slave_addr}, 地址0x{reg_addr:04X}, 数据{values}")
+            return True
+
+        try:
+            reg_count = len(values)
+            byte_count = reg_count * 2
+
+            # 清空接收缓冲区
+            if self.serial_conn.in_waiting > 0:
+                self.serial_conn.reset_input_buffer()
+
+            # 构建Modbus RTU写多个寄存器请求帧 (功能码0x10)
+            # 格式: [从机地址][功能码][起始地址高][起始地址低][寄存器数量高][寄存器数量低][字节数][数据...][CRC低][CRC高]
+            request = struct.pack('>BBHHB', slave_addr, 0x10, reg_addr, reg_count, byte_count)
+
+            # 添加数据 (大端格式)
+            for value in values:
+                request += struct.pack('>H', value & 0xFFFF)
+
+            # 计算并添加CRC
+            crc = self._calculate_crc(request)
+            request += struct.pack('<H', crc)
+
+            # 发送请求
+            self.serial_conn.write(request)
+            logging.debug(f"发送写寄存器请求: 从机{slave_addr}, 地址0x{reg_addr:04X}, 数量{reg_count}")
+
+            # 读取响应 (写多个寄存器响应长度固定为8字节)
+            response = self.serial_conn.read(8)
+
+            if len(response) < 8:
+                logging.error(f"写寄存器响应长度不足: 期望8, 实际{len(response)}")
+                return False
+
+            # 验证响应
+            if response[0] != slave_addr:
+                logging.error(f"从机地址不匹配: 期望{slave_addr}, 实际{response[0]}")
+                return False
+
+            if response[1] & 0x80:  # 检查错误标志
+                error_code = response[2]
+                logging.error(f"写寄存器错误响应: 功能码{response[1]}, 错误码{error_code}")
+                return False
+
+            if response[1] != 0x10:
+                logging.error(f"功能码不匹配: 期望0x10, 实际0x{response[1]:02X}")
+                return False
+
+            # 验证CRC
+            received_crc = struct.unpack('<H', response[-2:])[0]
+            calculated_crc = self._calculate_crc(response[:-2])
+            if received_crc != calculated_crc:
+                logging.error(f"CRC校验失败: 接收0x{received_crc:04X}, 计算0x{calculated_crc:04X}")
+                return False
+
+            # 验证返回的地址和数量
+            returned_addr = struct.unpack('>H', response[2:4])[0]
+            returned_count = struct.unpack('>H', response[4:6])[0]
+
+            if returned_addr != reg_addr or returned_count != reg_count:
+                logging.error(f"返回参数不匹配: 地址期望0x{reg_addr:04X}/实际0x{returned_addr:04X}, 数量期望{reg_count}/实际{returned_count}")
+                return False
+
+            logging.debug(f"写寄存器成功: 从机{slave_addr}, 地址0x{reg_addr:04X}, 数量{reg_count}")
+            return True
+
+        except Exception as e:
+            logging.error(f"写寄存器通信错误: {e}")
+            return False
+
+    def write_single_register(self, slave_addr: int, reg_addr: int, value: int) -> bool:
+        """
+        写单个寄存器 (功能码0x06)
+
+        Args:
+            slave_addr: 从机号
+            reg_addr: 寄存器地址
+            value: 要写入的值
+
+        Returns:
+            bool: 写入是否成功
+        """
+        if self.simulation_mode:
+            logging.info(f"模拟模式: 写入单个寄存器 从机{slave_addr}, 地址0x{reg_addr:04X}, 值{value}")
+            return True
+
+        try:
+            # 清空接收缓冲区
+            if self.serial_conn.in_waiting > 0:
+                self.serial_conn.reset_input_buffer()
+
+            # 构建Modbus RTU写单个寄存器请求帧 (功能码0x06)
+            request = struct.pack('>BBHH', slave_addr, 0x06, reg_addr, value & 0xFFFF)
+            crc = self._calculate_crc(request)
+            request += struct.pack('<H', crc)
+
+            # 发送请求
+            self.serial_conn.write(request)
+            logging.debug(f"发送写单个寄存器请求: 从机{slave_addr}, 地址0x{reg_addr:04X}, 值{value}")
+
+            # 读取响应 (写单个寄存器响应长度固定为8字节)
+            response = self.serial_conn.read(8)
+
+            if len(response) < 8:
+                logging.error(f"写单个寄存器响应长度不足: 期望8, 实际{len(response)}")
+                return False
+
+            # 验证响应 (写单个寄存器的响应应该与请求相同)
+            if response[:-2] != request[:-2]:  # 除了CRC外应该相同
+                logging.error("写单个寄存器响应数据不匹配")
+                return False
+
+            # 验证CRC
+            received_crc = struct.unpack('<H', response[-2:])[0]
+            calculated_crc = self._calculate_crc(response[:-2])
+            if received_crc != calculated_crc:
+                logging.error(f"CRC校验失败: 接收0x{received_crc:04X}, 计算0x{calculated_crc:04X}")
+                return False
+
+            logging.debug(f"写单个寄存器成功: 从机{slave_addr}, 地址0x{reg_addr:04X}, 值{value}")
+            return True
+
+        except Exception as e:
+            logging.error(f"写单个寄存器通信错误: {e}")
+            return False
+
     def _calculate_crc(self, data: bytes) -> int:
+        """
+        计算Modbus RTU CRC16校验码
+        使用标准的CRC-16-ANSI算法
+        """
         crc = 0xFFFF
         for byte in data:
             crc ^= byte
@@ -635,6 +1076,343 @@ class ModbusCommunication:
                 else:
                     crc >>= 1
         return crc
+
+
+class DeviceManager:
+    """设备管理器 - 统一管理Modbus RTU和TCP设备"""
+
+    def __init__(self, config_manager: 'ConfigManager'):
+        self.config_manager = config_manager
+        self.modbus_rtu_comm = None
+        self.modbus_tcp_devices: Dict[str, 'ModbusTCPDevice'] = {}
+        self.tcp_device_configs = {}
+        self.di_status_cache = {}
+        self.do_status_cache = {}
+        self.monitoring_active = False
+        self.monitor_thread = None
+        self.status_callbacks = []
+
+        # 初始化Modbus RTU通信
+        self._initialize_modbus_rtu()
+
+        # 初始化Modbus TCP设备
+        self._initialize_modbus_tcp_devices()
+
+    def _initialize_modbus_rtu(self):
+        """初始化Modbus RTU通信"""
+        try:
+            com_settings = self.config_manager.get_com_settings()
+            self.modbus_rtu_comm = ModbusCommunication(com_settings)
+            self.modbus_rtu_comm.initialize_serial()
+            logging.info("Modbus RTU通信初始化成功")
+        except Exception as e:
+            logging.error(f"Modbus RTU通信初始化失败: {e}")
+
+    def _initialize_modbus_tcp_devices(self):
+        """初始化Modbus TCP设备"""
+        if not MODBUS_TCP_AVAILABLE:
+            logging.warning("Modbus TCP模块不可用")
+            return
+
+        try:
+            # 从配置文件读取TCP设备配置
+            tcp_configs = self._load_tcp_device_configs()
+
+            for device_id, config in tcp_configs.items():
+                try:
+                    device = ModbusTCPDevice(
+                        ip=config['ip'],
+                        port=config.get('port', 502),
+                        timeout=config.get('timeout', 5)
+                    )
+
+                    if device.connect():
+                        self.modbus_tcp_devices[device_id] = device
+                        self.tcp_device_configs[device_id] = config
+                        logging.info(f"Modbus TCP设备 {device_id} ({config['ip']}) 连接成功")
+                    else:
+                        logging.warning(f"Modbus TCP设备 {device_id} ({config['ip']}) 连接失败")
+
+                except Exception as e:
+                    logging.error(f"初始化Modbus TCP设备 {device_id} 失败: {e}")
+
+        except Exception as e:
+            logging.error(f"初始化Modbus TCP设备失败: {e}")
+
+    def _load_tcp_device_configs(self) -> Dict:
+        """从配置文件加载TCP设备配置"""
+        try:
+            config = configparser.ConfigParser()
+            config.read('ProductSetup.ini', encoding='utf-8')
+
+            tcp_configs = {}
+
+            # 检查是否有ModbusTCP配置段
+            if 'ModbusTCP' in config:
+                tcp_section = config['ModbusTCP']
+
+                # 解析设备配置
+                device_count = int(tcp_section.get('device_count', '1'))
+
+                for i in range(1, device_count + 1):
+                    device_id = f"tcp_device_{i}"
+                    ip_key = f'device_{i}_ip'
+                    port_key = f'device_{i}_port'
+                    name_key = f'device_{i}_name'
+
+                    if ip_key in tcp_section:
+                        tcp_configs[device_id] = {
+                            'ip': tcp_section[ip_key],
+                            'port': int(tcp_section.get(port_key, '502')),
+                            'name': tcp_section.get(name_key, f'设备{i}'),
+                            'timeout': int(tcp_section.get('timeout', '5'))
+                        }
+            else:
+                # 创建默认配置
+                tcp_configs['tcp_device_1'] = {
+                    'ip': '192.168.0.10',
+                    'port': 502,
+                    'name': 'C2000-A2-SDD8020-B83',
+                    'timeout': 5
+                }
+
+                # 保存默认配置到文件
+                self._save_default_tcp_config()
+
+            return tcp_configs
+
+        except Exception as e:
+            logging.error(f"加载TCP设备配置失败: {e}")
+            return {}
+
+    def _save_default_tcp_config(self):
+        """保存默认TCP设备配置"""
+        try:
+            config = configparser.ConfigParser()
+            config.read('ProductSetup.ini', encoding='utf-8')
+
+            if 'ModbusTCP' not in config:
+                config.add_section('ModbusTCP')
+
+            config['ModbusTCP']['device_count'] = '1'
+            config['ModbusTCP']['device_1_ip'] = '192.168.0.10'
+            config['ModbusTCP']['device_1_port'] = '502'
+            config['ModbusTCP']['device_1_name'] = 'C2000-A2-SDD8020-B83'
+            config['ModbusTCP']['timeout'] = '5'
+
+            with open('ProductSetup.ini', 'w', encoding='utf-8') as f:
+                config.write(f)
+
+            logging.info("默认TCP设备配置已保存")
+
+        except Exception as e:
+            logging.error(f"保存默认TCP设备配置失败: {e}")
+
+    def get_modbus_rtu_comm(self) -> Optional['ModbusCommunication']:
+        """获取Modbus RTU通信对象"""
+        return self.modbus_rtu_comm
+
+    def get_tcp_device(self, device_id: str) -> Optional['ModbusTCPDevice']:
+        """获取指定的TCP设备"""
+        return self.modbus_tcp_devices.get(device_id)
+
+    def get_all_tcp_devices(self) -> Dict[str, 'ModbusTCPDevice']:
+        """获取所有TCP设备"""
+        return self.modbus_tcp_devices.copy()
+
+    def add_status_callback(self, callback):
+        """添加状态变化回调"""
+        self.status_callbacks.append(callback)
+
+    def get_di_status(self, device_id: str = None) -> Optional[Dict]:
+        """获取DI状态"""
+        if device_id is None:
+            device_id = list(self.modbus_tcp_devices.keys())[0] if self.modbus_tcp_devices else None
+
+        if not device_id or device_id not in self.modbus_tcp_devices:
+            return None
+
+        device = self.modbus_tcp_devices[device_id]
+        try:
+            di_status = device.get_di_status()
+            if di_status:
+                self.di_status_cache[device_id] = di_status
+                return {
+                    'device_id': device_id,
+                    'device_name': self.tcp_device_configs[device_id]['name'],
+                    'status': di_status,
+                    'timestamp': datetime.now().isoformat()
+                }
+        except Exception as e:
+            logging.error(f"读取设备 {device_id} DI状态失败: {e}")
+
+        return None
+
+    def get_do_status(self, device_id: str = None) -> Optional[Dict]:
+        """获取DO状态"""
+        if device_id is None:
+            device_id = list(self.modbus_tcp_devices.keys())[0] if self.modbus_tcp_devices else None
+
+        if not device_id or device_id not in self.modbus_tcp_devices:
+            return None
+
+        device = self.modbus_tcp_devices[device_id]
+        try:
+            do_status = device.get_do_status()
+            if do_status:
+                self.do_status_cache[device_id] = do_status
+                return {
+                    'device_id': device_id,
+                    'device_name': self.tcp_device_configs[device_id]['name'],
+                    'status': do_status,
+                    'timestamp': datetime.now().isoformat()
+                }
+        except Exception as e:
+            logging.error(f"读取设备 {device_id} DO状态失败: {e}")
+
+        return None
+
+    def set_do_output(self, device_id: str, do_num: int, state: bool) -> bool:
+        """设置DO输出"""
+        if device_id not in self.modbus_tcp_devices:
+            return False
+
+        device = self.modbus_tcp_devices[device_id]
+        try:
+            success = device.set_do_output(do_num, state)
+            if success:
+                # 更新缓存
+                self.get_do_status(device_id)
+
+                # 通知回调
+                for callback in self.status_callbacks:
+                    try:
+                        callback({
+                            'type': 'do_changed',
+                            'device_id': device_id,
+                            'do_num': do_num,
+                            'state': state
+                        })
+                    except Exception as e:
+                        logging.error(f"状态回调执行失败: {e}")
+
+            return success
+        except Exception as e:
+            logging.error(f"设置设备 {device_id} DO{do_num} 失败: {e}")
+            return False
+
+    def set_all_do_output(self, device_id: str, do1_state: bool, do2_state: bool) -> bool:
+        """设置所有DO输出"""
+        if device_id not in self.modbus_tcp_devices:
+            return False
+
+        device = self.modbus_tcp_devices[device_id]
+        try:
+            success = device.set_all_do_output(do1_state, do2_state)
+            if success:
+                # 更新缓存
+                self.get_do_status(device_id)
+
+                # 通知回调
+                for callback in self.status_callbacks:
+                    try:
+                        callback({
+                            'type': 'all_do_changed',
+                            'device_id': device_id,
+                            'do1_state': do1_state,
+                            'do2_state': do2_state
+                        })
+                    except Exception as e:
+                        logging.error(f"状态回调执行失败: {e}")
+
+            return success
+        except Exception as e:
+            logging.error(f"设置设备 {device_id} 所有DO失败: {e}")
+            return False
+
+    def get_device_info(self, device_id: str) -> Optional[Dict]:
+        """获取设备信息"""
+        if device_id not in self.modbus_tcp_devices:
+            return None
+
+        device = self.modbus_tcp_devices[device_id]
+        try:
+            device_info = device.get_device_info()
+            if device_info:
+                device_info['device_id'] = device_id
+                device_info['device_name'] = self.tcp_device_configs[device_id]['name']
+                device_info['connection_status'] = 'connected'
+            return device_info
+        except Exception as e:
+            logging.error(f"获取设备 {device_id} 信息失败: {e}")
+            return None
+
+    def start_monitoring(self, interval: float = 1.0):
+        """开始监控DI状态变化"""
+        if self.monitoring_active or not self.modbus_tcp_devices:
+            return
+
+        self.monitoring_active = True
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, args=(interval,))
+        self.monitor_thread.daemon = True
+        self.monitor_thread.start()
+        logging.info("设备监控已启动")
+
+    def stop_monitoring(self):
+        """停止监控"""
+        if self.monitoring_active:
+            self.monitoring_active = False
+            if self.monitor_thread:
+                self.monitor_thread.join(timeout=2)
+            logging.info("设备监控已停止")
+
+    def _monitor_loop(self, interval: float):
+        """监控循环"""
+        last_di_status = {}
+
+        while self.monitoring_active:
+            try:
+                for device_id in self.modbus_tcp_devices:
+                    current_di = self.get_di_status(device_id)
+
+                    if current_di and device_id in last_di_status:
+                        # 检查状态变化
+                        if current_di['status'] != last_di_status[device_id]['status']:
+                            # 通知回调
+                            for callback in self.status_callbacks:
+                                try:
+                                    callback({
+                                        'type': 'di_changed',
+                                        'device_id': device_id,
+                                        'old_status': last_di_status[device_id]['status'],
+                                        'new_status': current_di['status'],
+                                        'timestamp': current_di['timestamp']
+                                    })
+                                except Exception as e:
+                                    logging.error(f"状态回调执行失败: {e}")
+
+                    if current_di:
+                        last_di_status[device_id] = current_di
+
+                time.sleep(interval)
+
+            except Exception as e:
+                logging.error(f"监控循环错误: {e}")
+                time.sleep(interval)
+
+    def disconnect_all(self):
+        """断开所有设备连接"""
+        self.stop_monitoring()
+
+        for device_id, device in self.modbus_tcp_devices.items():
+            try:
+                device.disconnect()
+                logging.info(f"设备 {device_id} 已断开连接")
+            except Exception as e:
+                logging.error(f"断开设备 {device_id} 连接失败: {e}")
+
+        self.modbus_tcp_devices.clear()
+
 
 class GratingChannel:
     def __init__(self, channel_num: int, config: ChannelConfig, comm: ModbusCommunication, db_manager: DatabaseManager = None):
@@ -782,26 +1560,42 @@ class GratingChannel:
 
 class OpticalGratingWebSystem:
     def __init__(self):
+        # 初始化试用期管理器
+        self.trial_manager = TrialManager()
+
         self.config_manager = ConfigManager()
-        self.comm = ModbusCommunication(self.config_manager.get_com_settings())
+        self.device_manager = DeviceManager(self.config_manager)  # 使用新的设备管理器
+        self.comm = self.device_manager.get_modbus_rtu_comm()  # 获取RTU通信对象
         self.db_manager = DatabaseManager()  # 添加数据库管理器
         self.channels: Dict[int, GratingChannel] = {}
         self.running = False
         self.measurement_thread = None
         self.current_version = 'G45'  # 当前版本
-        
+
         # Flask应用初始化
         self.app = Flask(__name__)
         self.app.config['SECRET_KEY'] = 'optical_grating_system_2025'
         self.socketio = SocketIO(self.app, cors_allowed_origins="*")
-        
+
         # 确保templates目录存在
         template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
         if not os.path.exists(template_dir):
             os.makedirs(template_dir)
-            
+
+        # 设置设备状态变化回调
+        self.device_manager.add_status_callback(self._handle_device_status_change)
+
         self.setup_routes()
         self.setup_socket_events()
+
+    def _handle_device_status_change(self, status_data: Dict):
+        """处理设备状态变化"""
+        try:
+            # 通过Socket.IO推送状态变化
+            self.socketio.emit('device_status_change', status_data)
+            logging.info(f"设备状态变化: {status_data}")
+        except Exception as e:
+            logging.error(f"处理设备状态变化失败: {e}")
        
 
 
@@ -809,6 +1603,9 @@ class OpticalGratingWebSystem:
         """设置Web路由"""
         @self.app.route('/')
         def index():
+            # 检查试用期状态
+            if self.trial_manager.is_system_locked():
+                return render_template('trial_manager.html')
             return render_template('index.html')
 
         @self.app.route('/test_switch')
@@ -817,6 +1614,16 @@ class OpticalGratingWebSystem:
 
         @self.app.route('/api/start_measurement', methods=['POST'])
         def start_measurement():
+            # 检查试用期状态
+            if self.trial_manager.is_system_locked():
+                trial_status = self.trial_manager.get_trial_status()
+                return jsonify({
+                    'status': 'error',
+                    'message': '试用期已到期，请输入验证码解锁系统',
+                    'trial_expired': True,
+                    'trial_info': trial_status
+                })
+
             if self.start_measurement_process():
                 return jsonify({'status': 'success', 'message': '测量开始'})
             return jsonify({'status': 'error', 'message': '启动失败'})
@@ -1240,6 +2047,235 @@ class OpticalGratingWebSystem:
                 logging.error(f"获取CPK数据失败: {e}")
                 return jsonify({'error': str(e)}), 500
 
+        # 试用期管理相关路由
+        @self.app.route('/api/trial_status')
+        def get_trial_status():
+            """获取试用期状态"""
+            try:
+                status = self.trial_manager.get_trial_status()
+                return jsonify({
+                    'status': 'success',
+                    'trial_info': status
+                })
+            except Exception as e:
+                logging.error(f"获取试用期状态失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/api/verify_code', methods=['POST'])
+        def verify_trial_code():
+            """验证试用期验证码"""
+            try:
+                data = request.get_json()
+                code = data.get('code', '').strip()
+
+                if not code:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '请输入验证码'
+                    })
+
+                result = self.trial_manager.verify_code(code)
+
+                if result['success']:
+                    return jsonify({
+                        'status': 'success',
+                        'message': result['message'],
+                        'type': result['type']
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': result['message']
+                    })
+
+            except Exception as e:
+                logging.error(f"验证码验证失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': f'验证失败: {str(e)}'
+                })
+
+        @self.app.route('/trial')
+        def trial_page():
+            """试用期管理页面"""
+            return render_template('trial_manager.html')
+
+        @self.app.route('/test_trial')
+        def test_trial_page():
+            """试用期功能测试页面"""
+            return send_from_directory('.', 'test_trial_ui.html')
+
+        # Modbus TCP设备管理相关路由
+        @self.app.route('/api/modbus_tcp/devices')
+        def get_tcp_devices():
+            """获取所有TCP设备列表"""
+            try:
+                devices = []
+                for device_id, device in self.device_manager.get_all_tcp_devices().items():
+                    device_info = self.device_manager.get_device_info(device_id)
+                    if device_info:
+                        devices.append(device_info)
+                    else:
+                        # 如果无法获取详细信息，返回基本信息
+                        config = self.device_manager.tcp_device_configs.get(device_id, {})
+                        devices.append({
+                            'device_id': device_id,
+                            'device_name': config.get('name', device_id),
+                            'ip_address': config.get('ip', 'unknown'),
+                            'modbus_port': config.get('port', 502),
+                            'connection_status': 'connected'
+                        })
+
+                return jsonify({
+                    'status': 'success',
+                    'devices': devices,
+                    'count': len(devices)
+                })
+            except Exception as e:
+                logging.error(f"获取TCP设备列表失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/api/modbus_tcp/device/<device_id>/di_status')
+        def get_device_di_status(device_id):
+            """获取设备DI状态"""
+            try:
+                di_status = self.device_manager.get_di_status(device_id)
+                if di_status:
+                    return jsonify({
+                        'status': 'success',
+                        'data': di_status
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '无法读取DI状态'
+                    })
+            except Exception as e:
+                logging.error(f"获取设备 {device_id} DI状态失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/api/modbus_tcp/device/<device_id>/do_status')
+        def get_device_do_status(device_id):
+            """获取设备DO状态"""
+            try:
+                do_status = self.device_manager.get_do_status(device_id)
+                if do_status:
+                    return jsonify({
+                        'status': 'success',
+                        'data': do_status
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '无法读取DO状态'
+                    })
+            except Exception as e:
+                logging.error(f"获取设备 {device_id} DO状态失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/api/modbus_tcp/device/<device_id>/do_control', methods=['POST'])
+        def control_device_do(device_id):
+            """控制设备DO输出"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '请求数据为空'
+                    })
+
+                # 单个DO控制
+                if 'do_num' in data and 'state' in data:
+                    do_num = int(data['do_num'])
+                    state = bool(data['state'])
+
+                    if do_num not in [1, 2]:
+                        return jsonify({
+                            'status': 'error',
+                            'message': 'DO编号必须是1或2'
+                        })
+
+                    success = self.device_manager.set_do_output(device_id, do_num, state)
+                    if success:
+                        return jsonify({
+                            'status': 'success',
+                            'message': f'DO{do_num} 设置为 {"高电平" if state else "低电平"}'
+                        })
+                    else:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'设置DO{do_num}失败'
+                        })
+
+                # 所有DO控制
+                elif 'do1_state' in data and 'do2_state' in data:
+                    do1_state = bool(data['do1_state'])
+                    do2_state = bool(data['do2_state'])
+
+                    success = self.device_manager.set_all_do_output(device_id, do1_state, do2_state)
+                    if success:
+                        return jsonify({
+                            'status': 'success',
+                            'message': f'所有DO设置成功: DO1={"高" if do1_state else "低"}, DO2={"高" if do2_state else "低"}'
+                        })
+                    else:
+                        return jsonify({
+                            'status': 'error',
+                            'message': '设置所有DO失败'
+                        })
+
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '无效的控制参数'
+                    })
+
+            except Exception as e:
+                logging.error(f"控制设备 {device_id} DO失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/api/modbus_tcp/device/<device_id>/info')
+        def get_device_info_api(device_id):
+            """获取设备详细信息"""
+            try:
+                device_info = self.device_manager.get_device_info(device_id)
+                if device_info:
+                    return jsonify({
+                        'status': 'success',
+                        'data': device_info
+                    })
+                else:
+                    return jsonify({
+                        'status': 'error',
+                        'message': '无法获取设备信息'
+                    })
+            except Exception as e:
+                logging.error(f"获取设备 {device_id} 信息失败: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        @self.app.route('/modbus_tcp')
+        def modbus_tcp_page():
+            """Modbus TCP设备管理页面"""
+            return render_template('modbus_tcp_control.html')
+
     def get_latest_cpk_data(self, version, channel, side):
         """获取最新的CPK数据 - 版本相关"""
         try:
@@ -1483,7 +2519,7 @@ class OpticalGratingWebSystem:
             channel = data.get('channel', 1)
             parameter = data.get('parameter', 'P1')
             view = data.get('view', 'avg')
-            
+
             if channel in self.channels:
                 measurements = self.channels[channel].get_recent_measurements(50)
                 chart_data = self.extract_parameter_data(measurements, parameter, view)
@@ -1492,6 +2528,99 @@ class OpticalGratingWebSystem:
                     'parameter': parameter,
                     'view': view,
                     'data': chart_data
+                })
+
+        # Modbus TCP设备相关Socket.IO事件
+        @self.socketio.on('request_tcp_device_status')
+        def handle_request_tcp_device_status(data):
+            """请求TCP设备状态"""
+            device_id = data.get('device_id')
+            if device_id:
+                # 获取DI状态
+                di_status = self.device_manager.get_di_status(device_id)
+                # 获取DO状态
+                do_status = self.device_manager.get_do_status(device_id)
+
+                emit('tcp_device_status_update', {
+                    'device_id': device_id,
+                    'di_status': di_status,
+                    'do_status': do_status,
+                    'timestamp': datetime.now().isoformat()
+                })
+
+        @self.socketio.on('control_tcp_device_do')
+        def handle_control_tcp_device_do(data):
+            """控制TCP设备DO输出"""
+            try:
+                device_id = data.get('device_id')
+                do_num = data.get('do_num')
+                state = data.get('state')
+
+                if not device_id or do_num is None or state is None:
+                    emit('tcp_device_control_result', {
+                        'success': False,
+                        'message': '参数不完整'
+                    })
+                    return
+
+                success = self.device_manager.set_do_output(device_id, int(do_num), bool(state))
+
+                emit('tcp_device_control_result', {
+                    'success': success,
+                    'device_id': device_id,
+                    'do_num': do_num,
+                    'state': state,
+                    'message': f'DO{do_num} 设置{"成功" if success else "失败"}'
+                })
+
+                # 如果成功，广播状态更新
+                if success:
+                    do_status = self.device_manager.get_do_status(device_id)
+                    self.socketio.emit('tcp_device_status_update', {
+                        'device_id': device_id,
+                        'do_status': do_status,
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+            except Exception as e:
+                logging.error(f"Socket.IO控制TCP设备DO失败: {e}")
+                emit('tcp_device_control_result', {
+                    'success': False,
+                    'message': str(e)
+                })
+
+        @self.socketio.on('start_tcp_device_monitoring')
+        def handle_start_tcp_device_monitoring(data):
+            """开始TCP设备监控"""
+            try:
+                interval = data.get('interval', 1.0)
+                self.device_manager.start_monitoring(interval)
+                emit('tcp_device_monitoring_status', {
+                    'active': True,
+                    'interval': interval,
+                    'message': '设备监控已启动'
+                })
+            except Exception as e:
+                logging.error(f"启动TCP设备监控失败: {e}")
+                emit('tcp_device_monitoring_status', {
+                    'active': False,
+                    'message': str(e)
+                })
+
+        @self.socketio.on('stop_tcp_device_monitoring')
+        def handle_stop_tcp_device_monitoring():
+            """停止TCP设备监控"""
+            try:
+                self.device_manager.stop_monitoring()
+                emit('tcp_device_monitoring_status', {
+                    'active': False,
+                    'message': '设备监控已停止'
+                })
+            except Exception as e:
+                logging.error(f"停止TCP设备监控失败: {e}")
+                emit('tcp_device_monitoring_status', {
+                    'active': False,
+                    'message': str(e)
                 })
 
     def initialize(self) -> bool:
@@ -1520,22 +2649,35 @@ class OpticalGratingWebSystem:
         return len(self.channels) > 0
 
     def start_measurement_process(self) -> bool:
-        """开始测量过程"""
+        """开始测量过程 - 添加试用期检查"""
+        # 检查试用期状态
+        if self.trial_manager.is_system_locked():
+            logging.warning("系统已锁定，试用期已到期")
+            return False
+
         if not self.running:
             if self.initialize():
                 self.running = True
                 self.measurement_thread = threading.Thread(target=self._measurement_loop)
                 self.measurement_thread.daemon = True
                 self.measurement_thread.start()
+
+                # 启动设备监控
+                self.device_manager.start_monitoring(interval=1.0)
+
                 logging.info("测量开始")
                 return True
         return False
-    
+
     def stop_measurement_process(self):
         """停止测量过程"""
         self.running = False
         if self.measurement_thread:
             self.measurement_thread.join(timeout=1.0)
+
+        # 停止设备监控
+        self.device_manager.stop_monitoring()
+
         logging.info("测量停止")
     
     def _measurement_loop(self):
@@ -1604,8 +2746,26 @@ class OpticalGratingWebSystem:
     
     def run(self, host='127.0.0.1', port=5000, debug=False):
         """运行Web应用"""
-        logging.info(f"光栅测量系统Web版启动: http://{host}:{port}")
-        self.socketio.run(self.app, host=host, port=port, debug=debug)
+        try:
+            logging.info(f"光栅测量系统Web版启动: http://{host}:{port}")
+            self.socketio.run(self.app, host=host, port=port, debug=debug)
+        except KeyboardInterrupt:
+            logging.info("接收到中断信号，正在关闭系统...")
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        """清理资源"""
+        try:
+            # 停止测量过程
+            self.stop_measurement_process()
+
+            # 断开所有设备连接
+            self.device_manager.disconnect_all()
+
+            logging.info("系统资源清理完成")
+        except Exception as e:
+            logging.error(f"清理资源时发生错误: {e}")
 
 if __name__ == "__main__":
     logging.basicConfig(
